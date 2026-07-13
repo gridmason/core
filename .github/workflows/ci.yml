@@ -1,0 +1,40 @@
+name: CI
+
+# Runs only on main so integration (epic/**) and worker (issue/**) pushes stay
+# quiet — those carry [skip ci] and open CI-free draft PRs; CI runs once when the
+# batch PR lands on main.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build + test + lint + engine-coverage gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+      # Enforces the GW-D20 engine-coverage gate: the full unit suite runs on
+      # src/engine in a DOM-free node env, and the job fails if src/engine drops
+      # below 100% line/branch/function/statement (see vitest.config.ts).
+      - run: npm run coverage
+      # Storybook is an advisory pre-1.0 harness (stub for now); this keeps the
+      # build step green so the C-E2 canvas epic swaps in real stories without
+      # re-plumbing CI.
+      - run: npm run build-storybook
+      # Playwright canvas e2e harness (smoke stub); the real specs launch a
+      # browser in the C-E2/C-E4 epics, at which point add an `npx playwright
+      # install --with-deps chromium` step before this one.
+      - run: npm run e2e
