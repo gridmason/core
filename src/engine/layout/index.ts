@@ -55,7 +55,11 @@ export type {
   LayoutStoreEventMap,
 } from './store.js';
 
-// Migrate-on-read framework, owned by @gridmason/protocol, re-surfaced for
-// engine consumers that build a registry or read the current version.
+// Protocol contract pass-throughs: CURRENT_LAYOUT_SCHEMA_VERSION, MigratorRegistry,
+// and layoutMigrators are defined and owned by @gridmason/protocol (the migrate-on-read
+// framework — schema version + migrator registry + chain runner). Core neither defines
+// nor wraps them; it re-surfaces them verbatim so an engine consumer that builds a
+// registry or reads the current version meets them at this one barrel instead of
+// reaching into the protocol package directly.
 export { CURRENT_LAYOUT_SCHEMA_VERSION, MigratorRegistry, layoutMigrators } from '@gridmason/protocol';
 export type { Migrator, SchemaVersion, VersionedLayout } from '@gridmason/protocol';

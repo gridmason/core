@@ -1,7 +1,7 @@
 /**
  * The headless engine (docs/SPEC.md §2): the widget catalog, page-type registry,
- * LayoutDoc operations + the observable layout store, and the event model — plus
- * the placement and picker slots the later epics fill. DOM-free by contract — it
+ * LayoutDoc operations + the observable layout store, the event model, first-fit
+ * placement (#18), and the widget picker (#15). DOM-free by contract — it
  * operates on LayoutDoc JSON and emits change events through the DOM-free
  * {@link Emitter}; the canvas layer is the only DOM consumer. Held at 100%
  * coverage (GW-D20 gate, see vitest.config.ts).
