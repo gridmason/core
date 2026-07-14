@@ -68,6 +68,22 @@ export interface WidgetGeometry {
   readonly i: string;
 }
 
+/**
+ * The event a {@link PageCanvas} dispatches after a **user** drag or resize
+ * settles in edit mode (SPEC §2). It carries the full, post-edit geometry of
+ * every placed item so the edit-mode controller (#18) can persist the change.
+ * Only user pointer edits fire it — the canvas's own programmatic re-render
+ * (`layout` assignment) does not — so a consumer can round-trip an edit back
+ * into `layout` without a feedback loop.
+ */
+export const CANVAS_GEOMETRY_CHANGE_EVENT = 'gm:geometry-change';
+
+/** The `detail` of a {@link CANVAS_GEOMETRY_CHANGE_EVENT} — the post-edit geometry of every item. */
+export interface CanvasGeometryChangeDetail {
+  /** Every placed item's live `{x,y,w,h,i}` after the user edit settled. */
+  readonly geometry: readonly WidgetGeometry[];
+}
+
 /** Default gridstack column count when a layout does not pin one (SPEC §3 `maxColumns`). */
 const DEFAULT_COLUMNS = 12;
 
@@ -309,6 +325,34 @@ export class PageCanvas extends HTMLElementBase {
       },
       host,
     );
+    // Surface user drag/resize as a geometry-change event for the edit-mode
+    // controller (#18). `dragstop`/`resizestop` fire only for pointer edits, not
+    // for the canvas's own programmatic `update`/`addWidget` during a re-render,
+    // so re-applying the persisted layout never re-triggers this.
+    this.#grid.on('dragstop', this.#onUserEdit);
+    this.#grid.on('resizestop', this.#onUserEdit);
+  }
+
+  /** Handle a settled user drag/resize: emit the current geometry for persistence (#18). */
+  readonly #onUserEdit = (): void => {
+    if (!this.#editMode) return;
+    this.dispatchEvent(
+      new CustomEvent<CanvasGeometryChangeDetail>(CANVAS_GEOMETRY_CHANGE_EVENT, {
+        detail: { geometry: this.#currentGeometry() },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  };
+
+  /** The live `{x,y,w,h,i}` of every placed item, read back from gridstack. */
+  #currentGeometry(): WidgetGeometry[] {
+    const geometry: WidgetGeometry[] = [];
+    for (const instanceId of this.#items.keys()) {
+      const geo = this.geometryOf(instanceId);
+      if (geo !== undefined) geometry.push(geo);
+    }
+    return geometry;
   }
 
   /** Destroy the grid and unmount all widgets; safe to call more than once. */

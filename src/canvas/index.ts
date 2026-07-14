@@ -8,9 +8,10 @@
  * renders the resulting {@link EffectiveLayout} to a real grid, mounting one
  * widget custom element per placed item with the widget ABI. The per-widget
  * error boundary + skeletons + telemetry attribution (`./boundary`) wrap every
- * mount. Edit mode (drag/resize/add/remove/tabs), the keyboard alternative, and
- * virtualization are the sibling C-E3 issues (#18, #19, #21) that build on this
- * mounting + lifecycle foundation.
+ * mount, and edit mode (drag/resize/add/remove/tabs, `./edit-mode`, #18) builds
+ * on the mounting + lifecycle foundation. The keyboard alternative (#19) and
+ * virtualization (#21) are the remaining sibling C-E3 issues.
  */
 export * from './PageCanvas/index.js';
 export * from './boundary/index.js';
+export * from './edit-mode/index.js';
