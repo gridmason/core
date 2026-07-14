@@ -22,6 +22,12 @@ export type {
   ResolveLayoutInputs,
 } from './resolve.js';
 
+// Resolution-time gating (FR-7, SPEC §6): the picker's four checks re-run on a
+// resolved layout's persisted instances, silently omitting the ones now gated
+// off / unpermitted without touching the saved doc.
+export { gateResolvedLayout, resolveAndGateLayout } from './gating.js';
+export type { ResolutionGatingContext, WidgetManifestSource } from './gating.js';
+
 export { loadLayout } from './load.js';
 export type {
   LoadedLayout,
