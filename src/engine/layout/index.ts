@@ -8,9 +8,20 @@
  * re-surfaces those primitives alongside `loadLayout` so engine consumers meet
  * layout operations at one import.
  *
- * 3-level resolution/governance (`resolveLayout`, FR-5) is a later epic (C-E2)
- * and deliberately not part of this module yet.
+ * 3-level resolution/governance (`resolveLayout`, FR-5, SPEC §5) lands here as
+ * {@link resolveLayout}: the pure merge/lock engine that composes the default,
+ * org, and user levels into one {@link EffectiveLayout}. Copy-on-write forking
+ * and reset-to-default (also FR-5) are a sibling operation, not part of this
+ * module yet.
  */
+export { resolveLayout, ResolveLayoutError } from './resolve.js';
+export type {
+  EffectiveLayout,
+  LayoutLevel,
+  ResolutionLevel,
+  ResolveLayoutInputs,
+} from './resolve.js';
+
 export { loadLayout } from './load.js';
 export type {
   LoadedLayout,
