@@ -116,6 +116,53 @@ widget down or loses its state. List them in `observedAttributes` to react.
 Widgets emit outward as DOM `CustomEvent`s (e.g. `gm:action`); cross-widget
 communication goes through the SDK handle's typed event bus, not the canvas.
 
+### The host SDK handle (`.sdk`) — delivery contract
+
+The host SDK handle is the ABI's one **property** (not attribute), and its
+delivery is a normative contract that widget code and host shells both pin
+against (this is the seam `@gridmason/cli`'s widget-init templates read):
+
+- **The seam is the element's `.sdk` property.** `SDK_HANDLE_PROPERTY` is pinned
+  to `'sdk'`: the canvas assigns the host-supplied handle to `element.sdk`, and a
+  widget reads `this.sdk` to obtain it. The name is stable ABI — it does not
+  change without a major version.
+- **Delivered before `connectedCallback`.** The canvas assigns `.sdk` (together
+  with the four attributes) on the element **before** it inserts it into the DOM.
+  So for whatever handle the canvas holds at mount time, a widget MAY read
+  `this.sdk` **synchronously inside `connectedCallback`** and see it — the handle
+  is present no later than the first line of `connectedCallback`, never after.
+  - *Caveat — host-deferred handles.* This before-`connectedCallback` guarantee
+    covers the handle the canvas has **when the widget mounts** (the current
+    `PageCanvas.sdk`). A host that only knows a widget's handle *after* the mount
+    — e.g. it mints a distinct per-instance handle keyed off the mounted element —
+    delivers it by re-assignment **after** `connectedCallback`. A widget that must
+    interoperate with such a host should read `this.sdk` **at first use**, not
+    latch it once during `connectedCallback`.
+- **Re-assignment is in place — no re-mount, no notification.** Assigning
+  `PageCanvas.sdk` overwrites `.sdk` on every already-mounted widget element in
+  place and applies to future mounts. It does **not** re-mount — no
+  `disconnectedCallback` / `connectedCallback` fires — and the widget is **not**
+  signalled that the handle changed; it simply reads the new value the next time
+  it accesses `this.sdk`. A widget that cached the old reference keeps using it,
+  so read `this.sdk` at use if the host re-assigns.
+- **Opaque — core never inspects it.** The canvas stores the handle verbatim and
+  never reads a property off it. Its type, shape, and contents are defined
+  entirely by `@gridmason/sdk`; core neither validates nor depends on them. Any
+  value is legal (even a `Proxy` that throws on access).
+- **An unset handle is `undefined`.** When the host never sets `PageCanvas.sdk`,
+  the canvas still assigns the property — to `undefined`. `this.sdk` reads
+  `undefined` (the own property exists; it is not a prototype lookup); a widget
+  that needs a handle must tolerate its absence.
+
+> **One shared handle, not one-per-instance (0.3.x).** `PageCanvas.sdk` is a
+> single reference handed to *every* widget the canvas mounts — there is no
+> per-mount `.sdk` seam that mints a distinct handle before each widget's first
+> line runs. A host that needs a **distinct** handle per instance (e.g. a
+> per-instance identity/token) assigns it per element **after** mount — on
+> `gm:rendered`, and on `gm:widget-mounted` under virtualization — via the
+> re-assignment path above. Per-mount distinct delivery *at* mount time (an
+> `sdkFactory` invoked per mount) is a possible future seam, not shipped behavior.
+
 ## Lifecycle guarantee (FR-11)
 
 > **`disconnectedCallback` is guaranteed to run before an instance is removed or

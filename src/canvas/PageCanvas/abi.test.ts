@@ -97,3 +97,53 @@ describe('assignSdkHandle', () => {
     expect((el as unknown as Record<string, unknown>)[SDK_HANDLE_PROPERTY]).toBeUndefined();
   });
 });
+
+// Locks the host→widget SDK handle-delivery contract pinned in docs/canvas-abi.md
+// (issue #52). These are the ABI-function-level guarantees @gridmason/cli's
+// widget templates and host shells depend on; a change here is a breaking ABI
+// change and must fail these first.
+describe('SDK handle delivery contract (#52)', () => {
+  test('the handle property name is pinned to "sdk"', () => {
+    expect(SDK_HANDLE_PROPERTY).toBe('sdk');
+  });
+
+  test('an unset handle is delivered as an own property set to undefined', () => {
+    applyMountInput(el, {
+      tag: 'acme-chart',
+      instanceId: 'w1',
+      sdk: undefined,
+      context: null,
+      settings: undefined,
+      editMode: false,
+    });
+    // Not merely absent: the property exists (own) with value undefined, so a
+    // widget reading this.sdk gets undefined rather than a prototype lookup.
+    expect(Object.hasOwn(el, SDK_HANDLE_PROPERTY)).toBe(true);
+    expect((el as unknown as Record<string, unknown>)[SDK_HANDLE_PROPERTY]).toBeUndefined();
+  });
+
+  test('the handle is stored verbatim and never inspected (opaque)', () => {
+    // A handle that throws on ANY property access still round-trips: the ABI
+    // assigns and reads it back by reference only. Locks "core never inspects it".
+    const throwOnInspect = (): never => {
+      throw new Error('the SDK handle must not be inspected by core');
+    };
+    const handle = new Proxy(
+      {},
+      { get: throwOnInspect, has: throwOnInspect, ownKeys: throwOnInspect },
+    );
+    expect(() => assignSdkHandle(el, handle)).not.toThrow();
+    expect(() =>
+      applyMountInput(el, {
+        tag: 'acme-chart',
+        instanceId: 'w1',
+        sdk: handle,
+        context: null,
+        settings: undefined,
+        editMode: false,
+      }),
+    ).not.toThrow();
+    // Reference identity, not a property read — does not trip the proxy traps.
+    expect((el as unknown as Record<string, unknown>)[SDK_HANDLE_PROPERTY]).toBe(handle);
+  });
+});
