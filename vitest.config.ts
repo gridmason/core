@@ -35,6 +35,18 @@ export default defineConfig({
           include: ['src/canvas/**/*.test.ts'],
         },
       },
+      {
+        // Adapters are host-implemented interfaces + the dev-only persistence
+        // adapter (SPEC §2, §5). Its `Storage` backing is feature-detected and
+        // fully exercised through an injected fake `Storage`, so the tests need
+        // no DOM and run under `node` like the engine.
+        extends: true,
+        test: {
+          name: 'adapters',
+          environment: 'node',
+          include: ['src/adapters/**/*.test.ts'],
+        },
+      },
     ],
     coverage: {
       provider: 'v8',
