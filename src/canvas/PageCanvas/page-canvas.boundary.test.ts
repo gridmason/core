@@ -102,3 +102,14 @@ test('telemetry set after render applies to the next mount', () => {
   canvas.layout = singleGrid([widget('bad', 'pcb-throw')]);
   expect(events).toContainEqual(expect.objectContaining({ type: 'widget.error', instanceId: 'bad' }));
 });
+
+test('the boundaryAnnounce sink speaks a widget failure through the canvas (issue #55)', () => {
+  const spoken: string[] = [];
+  canvas.boundaryAnnounce = (m) => spoken.push(m);
+  canvas.widgetDescriptor = ({ widgetID }) => (widgetID.tag === 'pcb-throw' ? 'Revenue Widget' : undefined);
+  canvas.layout = singleGrid([widget('bad', 'pcb-throw'), widget('good', 'pcb-ok', { x: 4 })]);
+  document.body.appendChild(canvas);
+
+  // The failure is announced by name; the healthy sibling is silent (no chatter).
+  expect(spoken).toEqual(['Revenue Widget is unavailable.']);
+});
