@@ -47,6 +47,8 @@ import { assignSdkHandle } from '../PageCanvas/abi.js';
 import type { WidgetAbiState, WidgetMountInput } from '../PageCanvas/abi.js';
 import type { WidgetMountManager } from '../PageCanvas/mount-manager.js';
 
+import { widgetRecovered, widgetTimedOut, widgetUnavailable } from './announcements.js';
+import type { BoundaryAnnounce } from './announcements.js';
 import { createFallbackCard } from './fallback-card.js';
 import { createSkeleton } from './skeleton.js';
 import { BOUNDARY_CLASS, BOUNDARY_STATE, ensureBoundaryStyles } from './styles.js';
@@ -88,6 +90,15 @@ export interface WidgetBoundaryConfig {
   readonly latencyBudgetMs?: number;
   /** When `true`, a widget that exceeds its latency budget is auto-degraded to its fallback card (SPEC §7). */
   readonly autoDegradeOnLatency?: boolean;
+  /**
+   * A11y sink for user-facing boundary announcements (SPEC §7, FR-9/FR-10): the
+   * boundary speaks error-card / auto-degrade / post-retry-recovery transitions
+   * here, so a screen-reader user is told when a widget becomes unavailable or
+   * recovers. Absent, the boundary announces nothing (its inline fallback
+   * `role="alert"` is the baseline). Opt-in and composable — a host typically
+   * passes the same live region the edit-mode a11y layer uses.
+   */
+  readonly announce?: BoundaryAnnounce;
 }
 
 /** The collaborators one {@link WidgetBoundary} needs, supplied by the manager. */
@@ -131,6 +142,13 @@ export class WidgetBoundary {
   #settled = false;
   #pendingSeen = false;
   #mountResolved = false;
+  /**
+   * Whether this instance has *ever* entered its error state. Set on the first
+   * failure and kept across a retry (unlike the per-mount flags reset in
+   * {@link WidgetBoundary.#beginMount}) so a later `ready` is recognised as a
+   * *recovery* worth announcing — a first, never-failed mount is not.
+   */
+  #everErrored = false;
   #budgetTimer: ReturnType<typeof setTimeout> | undefined;
   #retryButton: HTMLButtonElement | undefined;
 
@@ -313,6 +331,12 @@ export class WidgetBoundary {
         exceeded: false,
       });
     }
+    // Announce a *recovery* — but never a first, never-failed load, which would be
+    // chatter (see `./announcements.ts`). Reset so a future failure→recovery speaks again.
+    if (this.#everErrored) {
+      this.#everErrored = false;
+      this.#announce(widgetRecovered(this.#name()));
+    }
   }
 
   /** Fall back to the error card, unmount the widget, and report the failure. */
@@ -322,6 +346,7 @@ export class WidgetBoundary {
     // Unmount the tracked element (fires disconnectedCallback); if the mount threw
     // mid-connect the element was never tracked, so clear the slot to detach it.
     if (!this.#deps.mounts.unmount(this.#input.instanceId)) this.#slot.replaceChildren();
+    this.#everErrored = true;
     this.#setState('error');
     this.#renderCard(reason);
     this.#emit({
@@ -331,6 +356,10 @@ export class WidgetBoundary {
       ...(message !== undefined ? { message } : {}),
       ...(error !== undefined ? { error } : {}),
     });
+    // A `timeout` is the auto-degrade path (SPEC §7); other reasons are plain
+    // failures. The card's own `role="alert"` is suppressed when a sink is wired
+    // (see `#renderCard`), so this is the single announcement, not a duplicate.
+    this.#announce(reason === 'timeout' ? widgetTimedOut(this.#name()) : widgetUnavailable(this.#name()));
   }
 
   /** Arm the latency-budget timer for a pending widget; idempotent (re-arms). */
@@ -370,7 +399,11 @@ export class WidgetBoundary {
   /** Build and insert the fallback card, wiring its retry to re-run the lifecycle. */
   #renderCard(reason: WidgetFailureReason): void {
     this.#removeCard();
-    const card = createFallbackCard(this.#deps.ownerDocument, reason, this.#name());
+    // When an announce sink is wired, the persistent live region speaks the
+    // failure, so the card's own inline `role="alert"` is suppressed to avoid a
+    // double announcement; without a sink it stays the a11y baseline.
+    const announced = this.#deps.config().announce !== undefined;
+    const card = createFallbackCard(this.#deps.ownerDocument, reason, this.#name(), { announced });
     card.retry.addEventListener('click', this.#onRetry);
     this.#retryButton = card.retry;
     this.#root.appendChild(card.root);
@@ -396,6 +429,11 @@ export class WidgetBoundary {
 
   #emit(event: WidgetBoundaryEvent): void {
     this.#deps.config().telemetry?.(event);
+  }
+
+  /** Speak a user-facing announcement through the configured sink, if any. */
+  #announce(message: string): void {
+    this.#deps.config().announce?.(message);
   }
 
   #identity(): WidgetInstanceIdentity {

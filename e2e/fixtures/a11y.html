@@ -42,7 +42,41 @@
         }
       }
       customElements.define('gm-a11y-widget', A11yWidget);
+
+      // Boundary widgets (issue #55): a widget that always crashes (its error card
+      // is announced), a slow widget that resolves on demand (a plain skeleton →
+      // ready that must NOT announce), and a flaky widget that crashes until fixed
+      // (its post-retry recovery is announced).
+      class CrashWidget extends HTMLElement {
+        connectedCallback() { throw new Error('crash on mount'); }
+      }
+      class SlowWidget extends HTMLElement {
+        connectedCallback() {
+          this.dispatchEvent(new CustomEvent('gm:loading', { bubbles: true }));
+          window.__resolveSlow = () => {
+            this.textContent = 'slow-ready';
+            this.dispatchEvent(new CustomEvent('gm:ready', { bubbles: true }));
+          };
+        }
+      }
+      class FlakyWidget extends HTMLElement {
+        connectedCallback() {
+          if (!window.__flakyOk) throw new Error('flaky-boom');
+          this.textContent = 'recovered';
+        }
+      }
+      customElements.define('gm-a11y-crash', CrashWidget);
+      customElements.define('gm-a11y-slow', SlowWidget);
+      customElements.define('gm-a11y-flaky', FlakyWidget);
       PageCanvas.define();
+
+      // The host-resolved display names for the boundary widgets (the same gated
+      // names their fallback cards show — an unnamed tag stays anonymous).
+      const BND_NAMES = {
+        'gm-a11y-crash': 'Revenue Chart',
+        'gm-a11y-slow': 'Live Feed',
+        'gm-a11y-flaky': 'Sales Chart',
+      };
 
       const scopeKey = { owner: 'user', pageType: 'demo' };
       const id = { source: 'local', tag: 'gm-a11y-widget' };
@@ -56,9 +90,14 @@
       const labelFor = (instanceId) => NAMES[instanceId] ?? 'New Widget';
 
       const item = (i, over = {}) => ({ widgetID: id, i, x: 0, y: 0, w: 3, h: 2, ...over });
+      // A layout item for a boundary widget (its own tag), used by loadBoundary.
+      const bitem = (i, tag, over = {}) => ({ widgetID: { source: 'local', tag }, i, x: 0, y: 0, w: 3, h: 2, ...over });
 
       const canvas = document.createElement(PageCanvas.tagName);
       canvas.context = DEMO_CONTEXT;
+      // Name the boundary widgets so their announcements are spoken by name (an
+      // unlisted tag returns undefined → stays anonymous, no tag echo — SPEC §6/§8).
+      canvas.widgetDescriptor = ({ widgetID }) => BND_NAMES[widgetID.tag];
       document.getElementById('app').appendChild(canvas);
 
       let controller;
@@ -80,6 +119,10 @@
         });
         controller.enter();
         a11y = attachCanvasKeyboardA11y(canvas, controller, { labelFor });
+        // Route widget-boundary state changes into the SAME live region the
+        // edit-mode a11y layer just created (issue #55) — one region for both.
+        const announcer = a11y.announcer;
+        canvas.boundaryAnnounce = (message) => announcer.announce(message);
       }
 
       // Default: two widgets side by side, editable.
@@ -121,6 +164,23 @@
         remove: (i) => a11y.controller.remove(i),
         focus: (i) => a11y.controller.focus(i),
         switchTab: (i, name) => a11y.controller.switchTab(i, name),
+
+        // Boundary scenario (issue #55): a crashing, a slow, and a flaky widget.
+        // boundaryAnnounce is wired in build() *after* this initial mount, so the
+        // initial cards/skeleton are silent — the test drives the announced
+        // transitions (retry / recover / resolve) explicitly.
+        loadBoundary: () => {
+          window.__flakyOk = false;
+          build(single([
+            bitem('crash1', 'gm-a11y-crash'),
+            bitem('slow1', 'gm-a11y-slow', { x: 3 }),
+            bitem('flaky1', 'gm-a11y-flaky', { x: 6 }),
+          ]));
+        },
+        boundaryState: (i) => canvas.boundaryOf(i)?.state ?? null,
+        resolveSlow: () => window.__resolveSlow && window.__resolveSlow(),
+        setFlakyOk: () => { window.__flakyOk = true; },
+        retryBoundary: (i) => canvas.boundaryOf(i)?.root.querySelector('button')?.click(),
 
         // Observations.
         live: () => (liveRegion()?.textContent ?? ''),

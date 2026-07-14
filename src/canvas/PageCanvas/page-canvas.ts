@@ -48,6 +48,7 @@ import type { LayoutWidget } from '@gridmason/protocol';
 import type { WidgetAbiState } from './abi.js';
 import { WidgetBoundaryManager } from '../boundary/index.js';
 import type {
+  BoundaryAnnounce,
   BoundaryMountInput,
   WidgetBoundaryConfig,
   WidgetDescriptor,
@@ -206,6 +207,7 @@ export class PageCanvas extends HTMLElementBase {
   #widgetDescriptor: WidgetDescriptor | undefined;
   #latencyBudgetMs: number | undefined;
   #autoDegradeOnLatency = false;
+  #boundaryAnnounce: BoundaryAnnounce | undefined;
 
   /** The resolved layout to render. Setting it re-renders the canvas synchronously. */
   get layout(): EffectiveLayout | undefined {
@@ -328,6 +330,25 @@ export class PageCanvas extends HTMLElementBase {
   }
 
   /**
+   * The a11y announcement sink for widget-boundary state changes (SPEC §7,
+   * FR-9/FR-10): the boundary speaks a widget becoming unavailable, an
+   * auto-degrade, or a post-retry recovery here. Distinct from the {@link telemetry}
+   * sink (host-internal attribution) — this is user-facing, so it never echoes a
+   * tag the viewer is not entitled to (SPEC §6/§8). A host typically passes the
+   * same live region the edit-mode a11y layer uses, e.g.
+   * `canvas.boundaryAnnounce = (m) => announcer.announce(m)`. Absent, boundaries
+   * fall back to their inline `role="alert"`. Set it any time — it applies to the
+   * next mount/retry.
+   */
+  get boundaryAnnounce(): BoundaryAnnounce | undefined {
+    return this.#boundaryAnnounce;
+  }
+  set boundaryAnnounce(value: BoundaryAnnounce | undefined) {
+    this.#boundaryAnnounce = value;
+    this.#applyBoundaryConfig();
+  }
+
+  /**
    * Whether offscreen-widget virtualization is active (SPEC §7, FR-15). Off by
    * default: every placed widget mounts eagerly. When `true`, a widget is mounted
    * only while its grid item is near the viewport and torn down when it scrolls
@@ -405,13 +426,14 @@ export class PageCanvas extends HTMLElementBase {
     return this.#boundaries.get(instanceId);
   }
 
-  /** Push the current boundary config (telemetry / descriptor / budget) into the boundary manager. */
+  /** Push the current boundary config (telemetry / descriptor / budget / announce) into the boundary manager. */
   #applyBoundaryConfig(): void {
     const config: WidgetBoundaryConfig = {
       ...(this.#telemetry !== undefined ? { telemetry: this.#telemetry } : {}),
       ...(this.#widgetDescriptor !== undefined ? { describe: this.#widgetDescriptor } : {}),
       ...(this.#latencyBudgetMs !== undefined ? { latencyBudgetMs: this.#latencyBudgetMs } : {}),
       autoDegradeOnLatency: this.#autoDegradeOnLatency,
+      ...(this.#boundaryAnnounce !== undefined ? { announce: this.#boundaryAnnounce } : {}),
     };
     this.#boundaries.configure(config);
   }

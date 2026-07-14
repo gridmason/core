@@ -20,7 +20,10 @@ export type {
 
 export { createSkeleton } from './skeleton.js';
 export { createFallbackCard } from './fallback-card.js';
-export type { FallbackCard } from './fallback-card.js';
+export type { CreateFallbackCardOptions, FallbackCard } from './fallback-card.js';
+
+export type { BoundaryAnnounce } from './announcements.js';
+export * as boundaryAnnouncements from './announcements.js';
 
 export {
   BOUNDARY_CLASS,
