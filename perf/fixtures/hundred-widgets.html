@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas perf smoke — 100-widget fixture</title>
+    <link rel="stylesheet" href="/node_modules/gridstack/dist/gridstack.css" />
+    <!--
+      Same bare-specifier resolution as the e2e fixtures (see e2e/fixtures/): a
+      shim for `gridstack` re-exporting the UMD global, and protocol's ESM dist.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "gridstack": "data:text/javascript,export const GridStack=window.GridStack;export default window.GridStack;",
+          "@gridmason/protocol": "/node_modules/@gridmason/protocol/dist/index.js"
+        }
+      }
+    </script>
+    <script src="/node_modules/gridstack/dist/gridstack-all.js"></script>
+  </head>
+  <body>
+    <main id="app"></main>
+    <script type="module">
+      import { PageCanvas } from '/dist/canvas/index.js';
+
+      // A trivial synchronous widget — no async work, so `canvas.interactive`
+      // measures the pure engine/canvas build + mount cost of a 100-widget page,
+      // which is what the p95 < 300 ms budget (SPEC §7) bounds.
+      class PerfWidget extends HTMLElement {
+        connectedCallback() {
+          this.textContent = this.getAttribute('instance-id');
+        }
+      }
+      customElements.define('gm-perf-widget', PerfWidget);
+      PageCanvas.define();
+
+      const WIDGET_COUNT = 100;
+      const COLUMNS = 12;
+
+      // Build a WIDGET_COUNT-item single-grid layout. `prefix` makes each build's
+      // instance ids disjoint from the previous one, so toggling between two
+      // layouts fully unmounts the old 100 and mounts a fresh 100 every iteration
+      // — measuring the worst-case full build, not an incremental reconcile.
+      const buildLayout = (prefix) => {
+        const items = [];
+        for (let n = 0; n < WIDGET_COUNT; n++) {
+          items.push({
+            widgetID: { source: 'local', tag: 'gm-perf-widget' },
+            i: `${prefix}-${n}`,
+            x: (n % 3) * 4,
+            y: Math.floor(n / 3) * 3,
+            w: 4,
+            h: 3,
+          });
+        }
+        return {
+          layout: {
+            schemaVersion: 1,
+            page: 'perf.page',
+            name: 'Perf',
+            default: true,
+            grid: { items },
+            hasTabs: false,
+            tabs: [],
+          },
+          lockedSlots: [],
+        };
+      };
+
+      const layoutA = buildLayout('a');
+      const layoutB = buildLayout('b');
+
+      const canvas = document.createElement(PageCanvas.tagName);
+
+      // Capture the canvas-interactive perf mark (the data→interactive latency)
+      // the canvas emits on every layout assignment.
+      let lastDuration = 0;
+      let lastMounted = 0;
+      canvas.perfTelemetry = (event) => {
+        lastDuration = event.durationMs;
+        lastMounted = event.mountedCount;
+      };
+      document.getElementById('app').appendChild(canvas);
+
+      let toggle = false;
+      // The control surface the perf spec drives. Each call assigns a fresh
+      // 100-widget layout (data arrives) and returns that render's measurement.
+      window.__perf = {
+        widgetCount: WIDGET_COUNT,
+        measure() {
+          toggle = !toggle;
+          canvas.layout = toggle ? layoutA : layoutB;
+          return { durationMs: lastDuration, mountedCount: lastMounted };
+        },
+      };
+      window.__perf_ready = true;
+    </script>
+  </body>
+</html>

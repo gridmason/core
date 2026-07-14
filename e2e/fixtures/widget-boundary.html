@@ -4,11 +4,16 @@
     <meta charset="utf-8" />
     <title>WidgetBoundary e2e fixture</title>
     <link rel="stylesheet" href="/node_modules/gridstack/dist/gridstack.css" />
-    <!-- Resolve the bare `gridstack` specifier to the UMD global (see page-canvas.html). -->
+    <!--
+      Resolve `gridstack` to the UMD global (see page-canvas.html) and
+      `@gridmason/protocol` to its ESM dist — the canvas barrel re-exports the
+      edit-mode module, whose engine layer imports protocol at runtime.
+    -->
     <script type="importmap">
       {
         "imports": {
-          "gridstack": "data:text/javascript,export const GridStack=window.GridStack;export default window.GridStack;"
+          "gridstack": "data:text/javascript,export const GridStack=window.GridStack;export default window.GridStack;",
+          "@gridmason/protocol": "/node_modules/@gridmason/protocol/dist/index.js"
         }
       }
     </script>

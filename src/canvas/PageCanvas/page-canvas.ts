@@ -53,6 +53,10 @@ import type {
   WidgetDescriptor,
   WidgetTelemetry,
 } from '../boundary/index.js';
+import { CanvasVirtualizer, DEFAULT_ROOT_MARGIN } from '../virtualization/index.js';
+import type { VirtualizerObserverFactory } from '../virtualization/index.js';
+import { CanvasPerfMarker } from '../perf/index.js';
+import type { CanvasInteractiveCounts, CanvasPerfTelemetry } from '../perf/index.js';
 
 /** The grid item geometry the canvas renders and reads back — the POC `{x,y,w,h,i}`. */
 export interface WidgetGeometry {
@@ -117,9 +121,25 @@ export class PageCanvas extends HTMLElementBase {
   readonly #boundaries = new WidgetBoundaryManager();
   /** Grid-item element per instance id — the join between a layout item and its gridstack node. */
   readonly #items = new Map<string, GridItemHTMLElement>();
+  /**
+   * Per placed instance: its content host and latest layout item. Every placed
+   * item is recorded here (whether or not its widget is currently mounted), so a
+   * virtualized item can be mounted lazily — with the current ABI — when it
+   * scrolls into view (#21).
+   */
+  readonly #placed = new Map<string, { host: HTMLElement; item: LayoutWidget }>();
 
   #grid: GridStack | undefined;
   #gridHost: HTMLElement | undefined;
+
+  /** Offscreen-widget virtualization (#21, FR-15). Off by default — every widget mounts eagerly. */
+  #virtualize = false;
+  #virtualizeRootMargin = DEFAULT_ROOT_MARGIN;
+  #virtualizeObserverFactory: VirtualizerObserverFactory | undefined;
+  #virtualizer: CanvasVirtualizer | undefined;
+
+  /** Canvas-interactive perf marks (#21, FR-15) — times each data→interactive render. */
+  readonly #perf = new CanvasPerfMarker();
 
   #layout: EffectiveLayout | undefined;
   #context: unknown;
@@ -138,8 +158,11 @@ export class PageCanvas extends HTMLElementBase {
   }
   set layout(value: EffectiveLayout | undefined) {
     this.#layout = value;
-    // A new layout may drop the current tab index out of range; clamp on render.
-    this.#render();
+    // The layout arriving is "data" for the p95 canvas-interactive budget (SPEC
+    // §7): open the perf window here, close it when the render settles. A new
+    // layout may also drop the current tab index out of range; clamp on render.
+    this.#perf.begin();
+    this.#renderAndSettle();
   }
 
   /**
@@ -249,6 +272,69 @@ export class PageCanvas extends HTMLElementBase {
     this.#applyBoundaryConfig();
   }
 
+  /**
+   * Whether offscreen-widget virtualization is active (SPEC §7, FR-15). Off by
+   * default: every placed widget mounts eagerly. When `true`, a widget is mounted
+   * only while its grid item is near the viewport and torn down when it scrolls
+   * away (still through the boundary/lifecycle path), so a long page's interactive
+   * cost stays bounded. Toggling it re-applies the policy to the current layout.
+   */
+  get virtualize(): boolean {
+    return this.#virtualize;
+  }
+  set virtualize(value: boolean) {
+    if (this.#virtualize === value) return;
+    this.#virtualize = value;
+    this.#virtualizer?.disconnect();
+    this.#virtualizer = undefined;
+    if (this.#grid !== undefined) this.#rebuildItems();
+  }
+
+  /**
+   * The near-viewport band virtualization mounts within, as a CSS `rootMargin`
+   * (default {@link DEFAULT_ROOT_MARGIN}). A larger band mounts widgets further
+   * ahead of scroll; a smaller one trims more aggressively.
+   */
+  get virtualizeRootMargin(): string {
+    return this.#virtualizeRootMargin;
+  }
+  set virtualizeRootMargin(value: string) {
+    if (this.#virtualizeRootMargin === value) return;
+    this.#virtualizeRootMargin = value;
+    this.#resetVirtualizerIfActive();
+  }
+
+  /**
+   * Advanced seam: supply the `IntersectionObserver` factory virtualization uses
+   * — for a custom scroll root, or for a test to drive intersection
+   * deterministically (mirrors the mount manager's injectable `ownerDocument`).
+   * Absent, the default wraps the global `IntersectionObserver`.
+   */
+  get virtualizeObserverFactory(): VirtualizerObserverFactory | undefined {
+    return this.#virtualizeObserverFactory;
+  }
+  set virtualizeObserverFactory(value: VirtualizerObserverFactory | undefined) {
+    this.#virtualizeObserverFactory = value;
+    this.#resetVirtualizerIfActive();
+  }
+
+  /**
+   * The canvas-interactive perf-telemetry sink (SPEC §7, FR-15): each
+   * data→interactive render emits a `canvas.interactive` measurement here so a
+   * host adapter can attribute the p95 < 300 ms budget. Distinct from the
+   * per-widget {@link telemetry} sink. Set it any time — it applies to the next
+   * render.
+   */
+  get perfTelemetry(): CanvasPerfTelemetry | undefined {
+    return this.#perfTelemetry;
+  }
+  set perfTelemetry(value: CanvasPerfTelemetry | undefined) {
+    this.#perfTelemetry = value;
+    this.#perf.setTelemetry(value);
+  }
+
+  #perfTelemetry: CanvasPerfTelemetry | undefined;
+
   /** The instance ids currently mounted on the active grid, in mount order. */
   get mountedInstanceIds(): readonly string[] {
     return this.#boundaries.instanceIds;
@@ -290,7 +376,9 @@ export class PageCanvas extends HTMLElementBase {
   /** Initialize the grid and render on connection (SPEC §2 — DOM work happens here). */
   connectedCallback(): void {
     this.#ensureGrid();
-    this.#render();
+    // If `layout` was assigned before connect, the perf window is already open
+    // from that setter; settle it now that the grid exists and the render can run.
+    this.#renderAndSettle();
   }
 
   /**
@@ -357,8 +445,11 @@ export class PageCanvas extends HTMLElementBase {
 
   /** Destroy the grid and unmount all widgets; safe to call more than once. */
   #teardown(): void {
+    this.#virtualizer?.disconnect();
+    this.#virtualizer = undefined;
     this.#boundaries.unmountAll();
     this.#items.clear();
+    this.#placed.clear();
     // destroy(false): drop gridstack's engine + listeners but leave our host div,
     // so a re-connect can re-init cleanly.
     this.#grid?.destroy(false);
@@ -417,7 +508,13 @@ export class PageCanvas extends HTMLElementBase {
     }
   }
 
-  /** Place a new grid item and mount its widget element into the item's content host. */
+  /**
+   * Place a new grid item, then either mount its widget immediately or — when
+   * virtualizing — defer the mount to the {@link CanvasVirtualizer}, which mounts
+   * it once the item scrolls near the viewport. The grid item itself is always
+   * placed, so geometry and page height are correct even for a not-yet-mounted
+   * (offscreen) widget.
+   */
   #addItem(item: LayoutWidget, locked: ReadonlySet<string>): void {
     const isLocked = item.slot !== undefined && locked.has(item.slot);
     const itemEl = this.#grid!.addWidget({
@@ -435,7 +532,12 @@ export class PageCanvas extends HTMLElementBase {
     itemEl.setAttribute('aria-roledescription', 'widget');
     const host = (itemEl.querySelector('.grid-stack-item-content') as HTMLElement | null) ?? itemEl;
     this.#items.set(item.i, itemEl);
-    this.#boundaries.mount(host, this.#mountInput(item));
+    this.#placed.set(item.i, { host, item });
+    if (this.#virtualize) {
+      this.#ensureVirtualizer().observe(item.i, itemEl);
+    } else {
+      this.#mountBoundary(item.i);
+    }
   }
 
   /** Update a surviving item's geometry (gridstack) and ABI state (in place, no re-mount). */
@@ -451,19 +553,88 @@ export class PageCanvas extends HTMLElementBase {
       noMove: isLocked,
       noResize: isLocked,
     });
+    // Remember the latest item so a later virtualized (re)mount uses current props.
+    const record = this.#placed.get(item.i);
+    if (record !== undefined) this.#placed.set(item.i, { host: record.host, item });
     this.#boundaries.updateAbiState(item.i, this.#abiState(item));
   }
 
   /** Unmount a widget (fires `disconnectedCallback`) then remove its now-empty grid item. */
   #removeItem(instanceId: string): void {
+    // Drop virtualization tracking first so a stray intersection callback can't
+    // re-mount an item mid-removal (unobserve fires no unmount — teardown is below).
+    this.#virtualizer?.unobserve(instanceId);
     // Unmount first so the widget's disconnectedCallback fires deterministically,
     // before gridstack tears the item element out of the DOM.
     this.#boundaries.unmount(instanceId);
+    this.#placed.delete(instanceId);
     const itemEl = this.#items.get(instanceId);
     if (itemEl !== undefined) {
       this.#grid!.removeWidget(itemEl, true, false);
       this.#items.delete(instanceId);
     }
+  }
+
+  /** Mount the boundary for a placed instance (idempotent). Used eagerly, or lazily by the virtualizer. */
+  #mountBoundary(instanceId: string): void {
+    const record = this.#placed.get(instanceId);
+    if (record === undefined || this.#boundaries.has(instanceId)) return;
+    this.#boundaries.mount(record.host, this.#mountInput(record.item));
+  }
+
+  /** Unmount a virtualized instance's widget (fires `disconnectedCallback`), leaving its grid item in place. */
+  #unmountBoundary(instanceId: string): void {
+    this.#boundaries.unmount(instanceId);
+  }
+
+  /** Render, then close the perf window if one is open (only settles a data-triggered render). */
+  #renderAndSettle(): void {
+    this.#render();
+    // `#render` no-ops until the grid exists; only settle once it actually ran, so
+    // a layout assigned before connect is measured across the connect boundary.
+    if (this.#grid !== undefined) this.#perf.settle(this.#perfCounts());
+  }
+
+  /** The counts a canvas-interactive perf event carries (placed vs actually-mounted, virtualization on/off). */
+  #perfCounts(): CanvasInteractiveCounts {
+    return {
+      placedCount: this.#placed.size,
+      mountedCount: this.#boundaries.size,
+      virtualized: this.#virtualize,
+    };
+  }
+
+  /** Lazily build the virtualizer with the current root-margin / observer factory. */
+  #ensureVirtualizer(): CanvasVirtualizer {
+    if (this.#virtualizer === undefined) {
+      this.#virtualizer = new CanvasVirtualizer(
+        {
+          mount: (instanceId) => this.#mountBoundary(instanceId),
+          unmount: (instanceId) => this.#unmountBoundary(instanceId),
+        },
+        {
+          rootMargin: this.#virtualizeRootMargin,
+          ...(this.#virtualizeObserverFactory !== undefined
+            ? { createObserver: this.#virtualizeObserverFactory }
+            : {}),
+        },
+      );
+    }
+    return this.#virtualizer;
+  }
+
+  /** Rebuild the virtualizer with new config and re-apply the mount policy, if virtualization is live. */
+  #resetVirtualizerIfActive(): void {
+    if (!this.#virtualize) return; // config is picked up lazily on next enable
+    this.#virtualizer?.disconnect();
+    this.#virtualizer = undefined;
+    if (this.#grid !== undefined) this.#rebuildItems();
+  }
+
+  /** Tear every placed item down and re-render from the active layout, applying the current mount policy. */
+  #rebuildItems(): void {
+    for (const instanceId of [...this.#items.keys()]) this.#removeItem(instanceId);
+    this.#render();
   }
 
   /** Re-apply the mutable ABI (context / settings / edit-mode) to every mounted widget. */
