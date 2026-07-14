@@ -3,6 +3,10 @@
   "version": "0.2.0",
   "description": "Gridmason engine: the framework-agnostic widgetized page-view core — headless layout engine, widget catalog, 3-level governance, and the gridstack canvas binding.",
   "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gridmason/core.git"
+  },
   "type": "module",
   "sideEffects": false,
   "engines": {
