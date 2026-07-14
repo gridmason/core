@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Keyboard + a11y e2e fixture</title>
+    <link rel="stylesheet" href="/node_modules/gridstack/dist/gridstack.css" />
+    <!--
+      Resolve the two bare specifiers the built canvas graph imports at runtime:
+      `gridstack` (to the UMD global) and `@gridmason/protocol` (self-contained
+      ESM). Mirrors e2e/fixtures/edit-mode.html.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "gridstack": "data:text/javascript,export const GridStack=window.GridStack;export default window.GridStack;",
+          "@gridmason/protocol": "/node_modules/@gridmason/protocol/dist/index.js"
+        }
+      }
+    </script>
+    <script src="/node_modules/gridstack/dist/gridstack-all.js"></script>
+    <style>
+      /* A fixed-width 12-col grid so cell math is deterministic for keyboard steps. */
+      #app { width: 1200px; }
+      .grid-stack { min-height: 400px; }
+      /* A visible focus ring so the keyboard-only run has a real focus affordance
+         (also keeps the item visually distinct for the axe pass). */
+      .grid-stack-item:focus { outline: 3px solid #1d4ed8; }
+    </style>
+  </head>
+  <body>
+    <h1>Gridmason canvas — keyboard &amp; a11y harness</h1>
+    <main id="app" aria-label="Demo page"></main>
+    <script type="module">
+      import { PageCanvas, EditController, attachCanvasKeyboardA11y } from '/dist/canvas/index.js';
+
+      // A vanilla test widget (no interactive content of its own, so the a11y of
+      // the canvas chrome is what axe measures).
+      class A11yWidget extends HTMLElement {
+        connectedCallback() {
+          this.style.cssText = 'display:block;height:100%;background:#eef2ff;border:1px solid #c7d2fe;';
+        }
+      }
+      customElements.define('gm-a11y-widget', A11yWidget);
+      PageCanvas.define();
+
+      const scopeKey = { owner: 'user', pageType: 'demo' };
+      const id = { source: 'local', tag: 'gm-a11y-widget' };
+
+      const store = { doc: undefined, puts: 0 };
+      const persistence = {
+        put(_key, doc) { store.doc = doc; store.puts += 1; },
+      };
+
+      const NAMES = { w1: 'Widget One', w2: 'Widget Two', locked: 'Header', free: 'Free' };
+      const labelFor = (instanceId) => NAMES[instanceId] ?? 'New Widget';
+
+      const single = (items, lockedSlots = []) => ({
+        layout: {
+          schemaVersion: 1, page: 'demo', name: 'Demo', default: true,
+          grid: { items }, hasTabs: false, tabs: [],
+        },
+        lockedSlots,
+      });
+      const item = (i, over = {}) => ({ widgetID: id, i, x: 0, y: 0, w: 3, h: 2, ...over });
+
+      const canvas = document.createElement(PageCanvas.tagName);
+      canvas.context = { record: { recordType: 'customer', id: '42' } };
+      document.getElementById('app').appendChild(canvas);
+
+      let controller;
+      let a11y;
+
+      function build(inherited, options = {}) {
+        if (a11y) a11y.dispose();
+        if (controller) controller.dispose();
+        store.doc = undefined;
+        store.puts = 0;
+        controller = new EditController({
+          canvas, persistence, scopeKey, inherited, ...options,
+          picker: {
+            catalog: [{ id, manifest: { tag: 'gm-a11y-widget', kind: 'widget' } }],
+            pageType: { id: 'demo', context: {} },
+            gates: { isGateOn: () => true },
+            permissions: { hasPermissions: () => true },
+          },
+        });
+        controller.enter();
+        a11y = attachCanvasKeyboardA11y(canvas, controller, { labelFor });
+      }
+
+      // Default: two widgets side by side, editable.
+      build(single([item('w1'), item('w2', { x: 6, y: 5 })]));
+
+      const liveRegion = () => canvas.querySelector('[data-gm-live-region]');
+
+      window.__gm_a11y = {
+        loadDefault: () => build(single([item('w1'), item('w2', { x: 6, y: 5 })])),
+        loadLocked: () => build(single([
+          item('locked', { slot: 'header', w: 12, h: 2 }),
+          item('free', { y: 2 }),
+        ], ['header'])),
+        loadTabbed: () => build({
+          layout: {
+            schemaVersion: 1, page: 'demo', name: 'Demo', default: true,
+            grid: { items: [] }, hasTabs: true,
+            tabs: [
+              { name: 'Overview', grid: { items: [item('w1')] } },
+              { name: 'Details', grid: { items: [item('w2')] } },
+            ],
+          },
+          lockedSlots: [],
+        }, { allowTabs: true }),
+
+        // Operations routed through the a11y controller (announced).
+        add: () => a11y.controller.add({ widgetID: id }, 'Clock').i,
+        remove: (i) => a11y.controller.remove(i),
+        focus: (i) => a11y.controller.focus(i),
+        switchTab: (i, name) => a11y.controller.switchTab(i, name),
+
+        // Observations.
+        live: () => (liveRegion()?.textContent ?? ''),
+        inMoveMode: () => a11y.controller.inMoveMode,
+        focused: () => a11y.controller.focusedInstanceId,
+        activeInstance: () => document.activeElement?.getAttribute?.('data-gm-instance') ?? null,
+        activeConnected: () => !!document.activeElement && document.activeElement !== document.body && document.activeElement.isConnected,
+        puts: () => store.puts,
+        forked: () => controller.forked,
+        storedItems: () => (store.doc ? store.doc.grid.items.map((it) => ({ i: it.i, x: it.x, y: it.y, w: it.w, h: it.h })) : undefined),
+        storedTabItems: (idx) => (store.doc && store.doc.hasTabs ? store.doc.tabs[idx].grid.items.map((it) => it.i) : undefined),
+        mounted: () => canvas.mountedInstanceIds,
+      };
+
+      window.__gm_ready = true;
+    </script>
+  </body>
+</html>

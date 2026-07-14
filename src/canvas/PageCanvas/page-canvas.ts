@@ -77,6 +77,22 @@ export interface CanvasGeometryChangeDetail {
   readonly geometry: readonly WidgetGeometry[];
 }
 
+/**
+ * The event a {@link PageCanvas} dispatches after every render reconciles the
+ * grid with the active layout — mounts, unmounts, and in-place updates all
+ * settled. The a11y layer (#19) listens for it to (re)apply keyboard landmarks
+ * to the current grid items and to rescue focus that a removal or tab switch
+ * left on a detached node. Distinct from {@link CANVAS_GEOMETRY_CHANGE_EVENT},
+ * which fires only for a *user* pointer edit.
+ */
+export const CANVAS_RENDERED_EVENT = 'gm:rendered';
+
+/** The `detail` of a {@link CANVAS_RENDERED_EVENT} — the instance ids on the active grid, in mount order. */
+export interface CanvasRenderedDetail {
+  /** Every instance id currently placed on the active grid. */
+  readonly instanceIds: readonly string[];
+}
+
 /** Default gridstack column count when a layout does not pin one (SPEC §3 `maxColumns`). */
 const DEFAULT_COLUMNS = 12;
 
@@ -198,6 +214,16 @@ export class PageCanvas extends HTMLElementBase {
   }
 
   /**
+   * The gridstack **item** element for `instanceId` (the `.grid-stack-item`
+   * wrapping the widget) — the landmark/focus target the a11y layer (#19)
+   * decorates with `tabindex` and an accessible name. `undefined` if `instanceId`
+   * is not placed on the active grid.
+   */
+  itemElement(instanceId: string): HTMLElement | undefined {
+    return this.#items.get(instanceId);
+  }
+
+  /**
    * The live `{x,y,w,h,i}` geometry of a mounted instance, read back from
    * gridstack — the round-trip of the layout's placement (SPEC §2). `undefined`
    * if `instanceId` is not mounted.
@@ -228,8 +254,12 @@ export class PageCanvas extends HTMLElementBase {
   #ensureGrid(): void {
     if (this.#grid !== undefined) return;
     // Landmark the canvas so the a11y sibling (#19) can build AA announcements on
-    // a stable region root.
+    // a stable region root. A `region` landmark needs an accessible name; supply a
+    // default the host may override with its own `aria-label`/`aria-labelledby`.
     this.setAttribute('role', 'region');
+    if (this.getAttribute('aria-label') === null && this.getAttribute('aria-labelledby') === null) {
+      this.setAttribute('aria-label', 'Page canvas');
+    }
     const host = this.ownerDocument.createElement('div');
     host.classList.add('grid-stack');
     this.appendChild(host);
@@ -337,6 +367,17 @@ export class PageCanvas extends HTMLElementBase {
         this.#addItem(item, locked);
       }
     }
+
+    // Announce the settled grid so the a11y layer (#19) can re-apply keyboard
+    // landmarks and rescue focus. Fires for programmatic renders only — a user
+    // pointer edit is surfaced separately as CANVAS_GEOMETRY_CHANGE_EVENT.
+    this.dispatchEvent(
+      new CustomEvent<CanvasRenderedDetail>(CANVAS_RENDERED_EVENT, {
+        detail: { instanceIds: [...this.#items.keys()] },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   /** Place a new grid item and mount its widget element into the item's content host. */
