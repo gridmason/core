@@ -1,5 +1,12 @@
 # @gridmason/core
 
+## 0.5.0
+
+### Minor Changes
+
+- ce7da31: Announce widget-boundary state changes to assistive technology (SPEC §7, FR-9/FR-10). The per-widget error boundary now speaks the transitions a screen-reader user needs to hear — a widget becoming unavailable (its fallback card), an auto-degrade on latency, and a post-retry recovery — through an opt-in `announce` sink on the boundary config, surfaced on `PageCanvas` as the `boundaryAnnounce` property. A host typically routes it to the same `LiveAnnouncer` the edit-mode a11y layer uses (`canvas.boundaryAnnounce = (m) => announcer.announce(m)`), so one live region serves both. First loads and plain skeleton→ready transitions stay silent to avoid chatter; announcements use only the host-resolved display name (never a tag — SPEC §6/§8). When the sink is wired, the fallback card's inline `role="alert"` is dropped so the failure is not announced twice.
+- 1704a89: **BREAKING** (event discriminator): rename `CatalogRefusalEvent.type` from `'catalog.register.refused'` (dots) to `'catalog:register:refused'` (colons), aligning it with every other engine event discriminator (`catalog:registered`, `pageType:registered`, `layout:loaded`). A host that switches or filters telemetry on the literal `'catalog.register.refused'` string — including via `@gridmason/core/adapters` `TelemetryEvent` — must update that comparison to `'catalog:register:refused'`. The event's shape, payload, and emission points are otherwise unchanged. Shipped in `@gridmason/core@0.1.0`; per the 0.x changesets convention this discriminator change is released as a `minor`.
+
 ## 0.4.0
 
 ### Minor Changes
