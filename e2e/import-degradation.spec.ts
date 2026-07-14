@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+import { gotoFixture } from './support/harness.js';
+
 // End-to-end proof of layout import + anonymous unavailable-widget degradation
 // (issue #23, FR-13/FR-16) in a *real* browser. The fixture imports a layout that
 // references one widget this instance has ('e2e-known') and one untrusted widget
@@ -21,13 +23,10 @@ interface IoControl {
   telemetryJson(): string;
   restore(): void;
 }
-type IoWindow = Window & { __io: IoControl; __io_ready?: boolean };
-
-const FIXTURE = '/e2e/fixtures/import-degradation.html';
+type IoWindow = Window & { __io: IoControl };
 
 test.beforeEach(async ({ page }) => {
-  await page.goto(FIXTURE);
-  await page.waitForFunction(() => (window as unknown as IoWindow).__io_ready === true);
+  await gotoFixture(page, '/e2e/fixtures/import-degradation.html', '__io_ready');
 });
 
 test('the available widget mounts and renders while the unavailable one degrades', async ({ page }) => {

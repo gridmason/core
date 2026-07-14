@@ -28,8 +28,8 @@
   <body>
     <main id="app"></main>
     <script type="module">
-      import { PageCanvas } from '/dist/canvas/index.js';
-      import { EditController } from '/dist/canvas/index.js';
+      import { EditController, PageCanvas } from '/dist/canvas/index.js';
+      import { DEMO_CONTEXT, single, tabbed } from './support.js';
 
       // A vanilla test widget recording its lifecycle so remove can be proven.
       window.__lifecycle = [];
@@ -57,18 +57,10 @@
         },
       };
 
-      // Effective layouts for the two scenarios.
-      const single = (items, lockedSlots = []) => ({
-        layout: {
-          schemaVersion: 1, page: 'demo', name: 'Demo', default: true,
-          grid: { items }, hasTabs: false, tabs: [],
-        },
-        lockedSlots,
-      });
       const item = (i, over = {}) => ({ widgetID: id, i, x: 0, y: 0, w: 3, h: 2, ...over });
 
       const canvas = document.createElement(PageCanvas.tagName);
-      canvas.context = { record: { recordType: 'customer', id: '42' } };
+      canvas.context = DEMO_CONTEXT;
       document.getElementById('app').appendChild(canvas);
 
       let controller;
@@ -107,14 +99,7 @@
           item('locked', { slot: 'header', w: 12, h: 2 }),
           item('free', { y: 2 }),
         ], ['header'])),
-        loadTabbed: () => build({
-          layout: {
-            schemaVersion: 1, page: 'demo', name: 'Demo', default: true,
-            grid: { items: [] }, hasTabs: true,
-            tabs: [{ name: 'Overview', grid: { items: [item('w1')] } }],
-          },
-          lockedSlots: [],
-        }, { allowTabs: true }),
+        loadTabbed: () => build(tabbed([{ name: 'Overview', items: [item('w1')] }]), { allowTabs: true }),
 
         // Operations.
         addWidget: () => controller.addWidget({ widgetID: id }).i,

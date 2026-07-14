@@ -26,6 +26,7 @@
     <main id="app"></main>
     <script type="module">
       import { PageCanvas } from '/dist/canvas/index.js';
+      import { DEMO_CONTEXT, single, tabbed } from './support.js';
 
       // Ordered lifecycle log the spec asserts against.
       window.__lifecycle = [];
@@ -47,25 +48,9 @@
 
       const id = (tag) => ({ source: 'local', tag });
       const item = (i, over = {}) => ({ widgetID: id('gm-e2e-widget'), i, x: 0, y: 0, w: 4, h: 3, ...over });
-      const single = (items) => ({
-        layout: { schemaVersion: 1, page: 'demo', name: 'Demo', default: true, grid: { items }, hasTabs: false, tabs: [] },
-        lockedSlots: [],
-      });
-      const tabbed = (tabs) => ({
-        layout: {
-          schemaVersion: 1,
-          page: 'demo',
-          name: 'Demo',
-          default: true,
-          grid: { items: [] },
-          hasTabs: true,
-          tabs: tabs.map((t) => ({ name: t.name, grid: { items: t.items } })),
-        },
-        lockedSlots: [],
-      });
 
       const canvas = document.createElement(PageCanvas.tagName);
-      canvas.context = { record: { recordType: 'customer', id: '42' } };
+      canvas.context = DEMO_CONTEXT;
       canvas.sdk = { bus: 'e2e-handle' };
       canvas.layout = single([item('w1', { props: { range: '30d' } })]);
       document.getElementById('app').appendChild(canvas);

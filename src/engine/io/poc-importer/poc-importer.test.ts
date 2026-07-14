@@ -48,7 +48,8 @@ describe('importPocLayouts', () => {
     if (!result.ok) return;
 
     expect(result.pages).toHaveLength(2);
-    const [index, reports] = result.pages;
+    const index = result.pages[0]!;
+    const reports = result.pages[1]!;
 
     // Every converted doc is at the current schema version (migrate-on-read),
     // and the converter stamped it there directly (v0 POC → v1 baseline).
@@ -85,7 +86,7 @@ describe('importPocLayouts', () => {
     expect(reports.page).toBe('reports');
     expect(reports.doc.hasTabs).toBe(true);
     expect(reports.doc.tabs.map((t) => t.name)).toEqual(['Overview', 'Legacy']);
-    expect(reports.doc.tabs[1].grid.items[0].widgetID).toEqual({
+    expect(reports.doc.tabs[1]!.grid.items[0]!.widgetID).toEqual({
       source: 'local',
       tag: 'd287d3bc-94e9-4b6d-91ce-ef4bfced75ff',
     });
@@ -141,7 +142,7 @@ describe('toRenderablePocLayout', () => {
   test('resolves an imported page and degrades widgets the host lacks', () => {
     const result = importPocLayouts(FIXTURE);
     if (!result.ok) throw new Error('fixture failed to import');
-    const index = result.pages[0].doc;
+    const index = result.pages[0]!.doc;
 
     // Host has clock + notes but not the market ticker → one anonymous card.
     const rendered = toRenderablePocLayout(index, catalogAvailability(hostCatalog()));
@@ -150,7 +151,7 @@ describe('toRenderablePocLayout', () => {
 
     const items = rendered.effective.layout.grid.items;
     expect(items).toHaveLength(3);
-    expect(items[0].widgetID).toEqual({ source: 'local', tag: 'acme-clock' });
+    expect(items[0]!.widgetID).toEqual({ source: 'local', tag: 'acme-clock' });
     // The unavailable widget collapses to the shared anonymous placeholder,
     // dropping its identity and props; geometry + key survive.
     expect(items[2]).toEqual({
@@ -166,7 +167,7 @@ describe('toRenderablePocLayout', () => {
   test('degrades nothing when the host has every referenced widget', () => {
     const result = importPocLayouts(FIXTURE);
     if (!result.ok) throw new Error('fixture failed to import');
-    const index = result.pages[0].doc;
+    const index = result.pages[0]!.doc;
 
     const rendered = toRenderablePocLayout(index, catalogAvailability(hostCatalog('acme-market-ticker')));
     expect(rendered.degradedCount).toBe(0);

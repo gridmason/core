@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+import { gotoFixture } from './support/harness.js';
+
 // End-to-end proof of the per-widget error boundary (issue #20, FR-10) in a
 // *real* browser. The fixture mounts a mixed grid — a healthy, a slow, a
 // crashing, and an unavailable widget — through the built `@gridmason/core`
@@ -21,13 +23,10 @@ interface BndControl {
   resolveSlow(): void;
   retry(i: string): void;
 }
-type BndWindow = Window & { __bnd: BndControl; __bnd_ready?: boolean };
-
-const FIXTURE = '/e2e/fixtures/widget-boundary.html';
+type BndWindow = Window & { __bnd: BndControl };
 
 test.beforeEach(async ({ page }) => {
-  await page.goto(FIXTURE);
-  await page.waitForFunction(() => (window as unknown as BndWindow).__bnd_ready === true);
+  await gotoFixture(page, '/e2e/fixtures/widget-boundary.html', '__bnd_ready');
 });
 
 test('a crashing widget renders a named fallback card with a retry; siblings are unaffected', async ({ page }) => {

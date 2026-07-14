@@ -1,6 +1,8 @@
 import { AxeBuilder } from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 
+import { gotoFixture } from './support/harness.js';
+
 // End-to-end proof of the canvas keyboard alternative + a11y layer (issue #19,
 // FR-9) in a real browser. The fixture builds the built `@gridmason/core` canvas
 // + an EditController + the keyboard/a11y controller (attachCanvasKeyboardA11y)
@@ -42,14 +44,12 @@ interface GmA11y {
   storedTabItems(idx: number): string[] | undefined;
   mounted(): readonly string[];
 }
-type GmWindow = Window & { __gm_a11y: GmA11y; __gm_ready?: boolean };
+type GmWindow = Window & { __gm_a11y: GmA11y };
 
-const FIXTURE = '/e2e/fixtures/a11y.html';
 const WCAG_AA = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 
 test.beforeEach(async ({ page }) => {
-  await page.goto(FIXTURE);
-  await page.waitForFunction(() => (window as unknown as GmWindow).__gm_ready === true);
+  await gotoFixture(page, '/e2e/fixtures/a11y.html', '__gm_ready');
 });
 
 test('axe: the canvas has no WCAG 2.1 AA violations in edit mode', async ({ page }) => {
