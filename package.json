@@ -45,6 +45,7 @@
     "storybook": "node .storybook/stub.mjs",
     "build-storybook": "node .storybook/stub.mjs",
     "e2e": "playwright test",
+    "perf": "playwright test -c perf/perf.config.ts",
     "prepublishOnly": "npm run build",
     "changeset": "changeset",
     "version": "changeset version",
