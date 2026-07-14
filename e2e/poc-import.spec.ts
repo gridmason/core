@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+import { gotoFixture } from './support/harness.js';
+
 // End-to-end proof of the POC importer (issue #24, FR-14) in a *real* browser: a
 // checked-in `s7k-widgets-core` localStorage dump is imported, resolved onto a
 // demo page type, and rendered on the canvas. The host has two of the dump's
@@ -26,13 +28,10 @@ interface PocControl {
   dom(): string;
   telemetryJson(): string;
 }
-type PocWindow = Window & { __poc: PocControl; __poc_ready?: boolean };
-
-const FIXTURE = '/e2e/fixtures/poc-import.html';
+type PocWindow = Window & { __poc: PocControl };
 
 test.beforeEach(async ({ page }) => {
-  await page.goto(FIXTURE);
-  await page.waitForFunction(() => (window as unknown as PocWindow).__poc_ready === true);
+  await gotoFixture(page, '/e2e/fixtures/poc-import.html', '__poc_ready');
 });
 
 test('the real POC dump imports into both pages', async ({ page }) => {

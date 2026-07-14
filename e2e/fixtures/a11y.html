@@ -32,6 +32,7 @@
     <main id="app" aria-label="Demo page"></main>
     <script type="module">
       import { PageCanvas, EditController, attachCanvasKeyboardA11y } from '/dist/canvas/index.js';
+      import { DEMO_CONTEXT, single, tabbed } from './support.js';
 
       // A vanilla test widget (no interactive content of its own, so the a11y of
       // the canvas chrome is what axe measures).
@@ -54,17 +55,10 @@
       const NAMES = { w1: 'Widget One', w2: 'Widget Two', locked: 'Header', free: 'Free' };
       const labelFor = (instanceId) => NAMES[instanceId] ?? 'New Widget';
 
-      const single = (items, lockedSlots = []) => ({
-        layout: {
-          schemaVersion: 1, page: 'demo', name: 'Demo', default: true,
-          grid: { items }, hasTabs: false, tabs: [],
-        },
-        lockedSlots,
-      });
       const item = (i, over = {}) => ({ widgetID: id, i, x: 0, y: 0, w: 3, h: 2, ...over });
 
       const canvas = document.createElement(PageCanvas.tagName);
-      canvas.context = { record: { recordType: 'customer', id: '42' } };
+      canvas.context = DEMO_CONTEXT;
       document.getElementById('app').appendChild(canvas);
 
       let controller;
@@ -114,17 +108,13 @@
           return el ? { instance: el.getAttribute('data-gm-instance'), tabindex: el.getAttribute('tabindex') } : null;
         },
 
-        loadTabbed: () => build({
-          layout: {
-            schemaVersion: 1, page: 'demo', name: 'Demo', default: true,
-            grid: { items: [] }, hasTabs: true,
-            tabs: [
-              { name: 'Overview', grid: { items: [item('w1')] } },
-              { name: 'Details', grid: { items: [item('w2')] } },
-            ],
-          },
-          lockedSlots: [],
-        }, { allowTabs: true }),
+        loadTabbed: () => build(
+          tabbed([
+            { name: 'Overview', items: [item('w1')] },
+            { name: 'Details', items: [item('w2')] },
+          ]),
+          { allowTabs: true },
+        ),
 
         // Operations routed through the a11y controller (announced).
         add: () => a11y.controller.add({ widgetID: id }, 'Clock').i,

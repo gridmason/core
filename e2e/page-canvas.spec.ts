@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+import { gotoFixture } from './support/harness.js';
+
 // End-to-end proof of the canvas mount + lifecycle guarantee (issue #17, FR-8,
 // FR-11) in a *real* browser: the fixture loads the built `@gridmason/core`
 // canvas ESM and the real gridstack, mounts a vanilla test widget from an
@@ -26,13 +28,10 @@ interface GmControl {
   activeTab(n: number): void;
   setEditMode(on: boolean): void;
 }
-type GmWindow = Window & { __gm: GmControl; __gm_ready?: boolean };
-
-const FIXTURE = '/e2e/fixtures/page-canvas.html';
+type GmWindow = Window & { __gm: GmControl };
 
 test.beforeEach(async ({ page }) => {
-  await page.goto(FIXTURE);
-  await page.waitForFunction(() => (window as unknown as GmWindow).__gm_ready === true);
+  await gotoFixture(page, '/e2e/fixtures/page-canvas.html', '__gm_ready');
 });
 
 test('mounts a widget from an EffectiveLayout with the four ABI attrs and the sdk handle', async ({ page }) => {
