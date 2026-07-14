@@ -1,0 +1,5 @@
+---
+"@gridmason/core": minor
+---
+
+Add layout export/import + anonymous unavailable-widget degradation (`@gridmason/core/engine` IO, FR-13/FR-16). `exportLayout` serializes a `LayoutDoc` to JSON; `importLayout` parses and schema-validates untrusted JSON (via `validateLayoutDoc`) before any use — malformed input is rejected whole, never partially applied. `degradeUnavailableWidgets` projects a layout to its renderable form: every placed widget this instance cannot render (checked against the catalog with `catalogAvailability`, exact source-qualified identity per SPEC §4) collapses to the shared anonymous `UNAVAILABLE_WIDGET_ID` placeholder — so the canvas renders a generic "Unavailable widget" card that echoes no tag, name, or props in the DOM or in any telemetry event, and the original document is kept untouched so an instance restores losslessly when its widget appears. Enforces the §8 security posture: JSON-in only, no `<script>`/URL/base64 import path, no `new RegExp(userInput)`, and zero network calls (guarded by an executable check over the IO sources).
