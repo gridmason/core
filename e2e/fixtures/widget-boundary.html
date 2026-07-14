@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WidgetBoundary e2e fixture</title>
+    <link rel="stylesheet" href="/node_modules/gridstack/dist/gridstack.css" />
+    <!-- Resolve the bare `gridstack` specifier to the UMD global (see page-canvas.html). -->
+    <script type="importmap">
+      {
+        "imports": {
+          "gridstack": "data:text/javascript,export const GridStack=window.GridStack;export default window.GridStack;"
+        }
+      }
+    </script>
+    <script src="/node_modules/gridstack/dist/gridstack-all.js"></script>
+  </head>
+  <body>
+    <main id="app"></main>
+    <script type="module">
+      import { PageCanvas, BOUNDARY_CLASS } from '/dist/canvas/index.js';
+
+      // A healthy widget: interactive as soon as it mounts (synchronous).
+      class OkWidget extends HTMLElement {
+        connectedCallback() {
+          this.textContent = 'ok:' + this.getAttribute('instance-id');
+        }
+      }
+      // A slow widget: declares itself pending, resolves when the test asks.
+      class SlowWidget extends HTMLElement {
+        connectedCallback() {
+          this.dispatchEvent(new CustomEvent('gm:loading', { bubbles: true }));
+          window.__resolveSlow = () => {
+            this.textContent = 'slow-ready';
+            this.dispatchEvent(new CustomEvent('gm:ready', { bubbles: true }));
+          };
+        }
+      }
+      // A crashing widget: throws while mounting. In a real browser this is
+      // reported to window 'error' synchronously (not propagated) — the boundary
+      // must still catch it and show the fallback card.
+      class CrashWidget extends HTMLElement {
+        connectedCallback() {
+          throw new Error('crash on mount');
+        }
+      }
+      customElements.define('gm-e2e-ok', OkWidget);
+      customElements.define('gm-e2e-slow', SlowWidget);
+      customElements.define('gm-e2e-crash', CrashWidget);
+      // 'gm-e2e-missing' is deliberately never defined — a load failure.
+      PageCanvas.define();
+
+      const NAMES = {
+        'gm-e2e-ok': 'Overview',
+        'gm-e2e-slow': 'Live Feed',
+        'gm-e2e-crash': 'Revenue Chart',
+        // 'gm-e2e-missing' has no name — an unentitled/unknown tag stays anonymous.
+      };
+
+      const id = (tag) => ({ source: 'local', tag });
+      const item = (i, tag, over = {}) => ({ widgetID: id(tag), i, x: 0, y: 0, w: 3, h: 3, ...over });
+      const single = (items) => ({
+        layout: { schemaVersion: 1, page: 'demo', name: 'Demo', default: true, grid: { items }, hasTabs: false, tabs: [] },
+        lockedSlots: [],
+      });
+
+      window.__telemetry = [];
+
+      const canvas = document.createElement(PageCanvas.tagName);
+      canvas.context = { record: { recordType: 'customer', id: '42' } };
+      canvas.telemetry = (event) => window.__telemetry.push(event);
+      canvas.widgetDescriptor = ({ widgetID }) => NAMES[widgetID.tag];
+      canvas.latencyBudgetMs = 5000;
+      // A mixed grid: healthy, slow (skeleton), crashing (card), unavailable (anonymous card).
+      canvas.layout = single([
+        item('w-ok', 'gm-e2e-ok', { x: 0 }),
+        item('w-slow', 'gm-e2e-slow', { x: 3 }),
+        item('w-crash', 'gm-e2e-crash', { x: 6 }),
+        item('w-missing', 'gm-e2e-missing', { x: 9 }),
+      ]);
+      document.getElementById('app').appendChild(canvas);
+
+      const root = (i) => canvas.boundaryOf(i)?.root ?? null;
+
+      window.__bnd = {
+        state: (i) => canvas.boundaryOf(i)?.state ?? null,
+        mounted: () => canvas.mountedInstanceIds,
+        hasCard: (i) => (root(i)?.querySelector('.' + BOUNDARY_CLASS.fallback) ?? null) !== null,
+        cardTitle: (i) => root(i)?.querySelector('.' + BOUNDARY_CLASS.fallbackTitle)?.textContent ?? null,
+        cardText: (i) => root(i)?.querySelector('.' + BOUNDARY_CLASS.fallback)?.textContent ?? null,
+        hasRetry: (i) => (root(i)?.querySelector('.' + BOUNDARY_CLASS.retry) ?? null) !== null,
+        skeletonStatus: (i) => root(i)?.querySelector('[role="status"]')?.textContent ?? null,
+        widgetText: (i) => canvas.widgetElement(i)?.textContent ?? null,
+        telemetry: () => window.__telemetry.slice(),
+        resolveSlow: () => window.__resolveSlow && window.__resolveSlow(),
+        retry: (i) => root(i)?.querySelector('.' + BOUNDARY_CLASS.retry)?.click(),
+      };
+
+      window.__bnd_ready = true;
+    </script>
+  </body>
+</html>

@@ -28,10 +28,23 @@ carry; each assignment re-renders synchronously:
 Read-back helpers: `mountedInstanceIds`, `widgetElement(i)`, and `geometryOf(i)`
 (the live `{x,y,w,h,i}` — the POC geometry, unchanged).
 
-> Scope: this element is the **mounting + lifecycle foundation**. Edit-mode
+Boundary configuration (all optional; set any time — applies to the next
+mount/retry):
+
+| Property | Type | Meaning |
+|---|---|---|
+| `telemetry` | `WidgetTelemetry` | Sink for per-widget error + latency attribution events (§ *Error boundary* below). |
+| `widgetDescriptor` | `WidgetDescriptor` | Resolves a display **name** for a fallback card; return `undefined` to keep it anonymous (no capability leakage). |
+| `latencyBudgetMs` | `number` | Ms a pending (skeleton) widget may take before a `widget.latency` `exceeded` event fires. |
+| `autoDegradeOnLatency` | `boolean` | When `true`, a widget that blows its budget is auto-degraded to its fallback card. |
+
+Boundary introspection: `boundaryOf(i)` returns the per-widget boundary (its
+`state` is `loading` / `ready` / `error`).
+
+> Scope: this element is the **mounting + lifecycle foundation**. Every widget is
+> mounted through a per-widget error boundary + skeleton (#20, below). Edit-mode
 > authoring (drag/resize/add/remove/tabs, #18), the keyboard alternative and
-> richer a11y (#19), the per-widget error boundary and skeletons (#20), and
-> virtualization + debounced writes (#21) build on it.
+> richer a11y (#19), and virtualization + debounced writes (#21) build on it.
 
 ## Widget ABI — what a widget receives
 
@@ -81,3 +94,50 @@ unmount** (sdk §3 rule 6), so a well-behaved widget's only cleanup burden is wh
 it allocated outside the SDK. The canvas guarantees the callback *fires*; honoring
 it is the widget's responsibility. A widget that leaks a timer or observer keeps
 running after it leaves the page — the canvas cannot reclaim those for it.
+
+## Error boundary, skeletons, and telemetry (FR-10, SPEC §7)
+
+Every widget is mounted inside a **per-widget error boundary**: a widget that
+throws, fails to load, reports an error, or runs slow is isolated so its siblings
+and the rest of the canvas are unaffected — **one widget's failure never takes
+the page down**, and **the canvas never blocks on widget code**.
+
+### Readiness contract (skeletons)
+
+A widget tells the boundary how it loads, so a trivial widget is never stranded
+behind a spinner and a slow one always shows a skeleton:
+
+- A widget that finishes initializing **synchronously** dispatches nothing — it
+  is interactive when its `connectedCallback` returns (no skeleton).
+- A widget that loads **asynchronously** signals *pending* during
+  `connectedCallback`, either by dispatching a bubbling **`gm:loading`**
+  `CustomEvent` or by setting the boolean attribute **`gm-loading`**. The boundary
+  shows a skeleton until the widget dispatches **`gm:ready`**, then reveals it.
+- A widget may dispatch **`gm:error`** (`detail?: { message?, error? }`) at any
+  time to fall back to its error card.
+
+A widget whose tag was **never registered** is an entitled *load failure* and
+gets the fallback card; a *gated-off* instance is omitted by the engine and never
+reaches a boundary (SPEC §6 — no card, no capability leakage).
+
+### Fallback card
+
+The card shows the widget's **name** (from `widgetDescriptor`) and a **retry**
+that re-runs the whole mount lifecycle cleanly (`disconnectedCallback` before the
+fresh mount). When no name is available (an unknown/unentitled tag), the card is
+**anonymous** ("Unavailable widget") and echoes **no tag or name** (SPEC §6/§8).
+Cards and skeletons are accessible: a skeleton exposes a `role="status"`
+announcement; a card is a labelled `role="group"` with a `role="alert"` message
+and a real focusable retry `<button>`.
+
+### Telemetry attribution
+
+Per-widget **error** and **latency** events flow to the host `telemetry` sink
+(never over the network — core makes zero network calls). Every event carries the
+instance identity (`instanceId` + source-qualified `widgetID`) so a host can
+attribute *which widget, from which source* failed or ran slow, and may
+auto-degrade a widget that exceeds its `latencyBudgetMs`. Telemetry is host-
+internal, so — unlike the user-facing card — it always carries the full identity.
+
+> The canvas-local `WidgetTelemetry` port mirrors the engine's `CatalogTelemetry`
+> shape; both fold into the finalized C-E4 telemetry adapter when it lands.
