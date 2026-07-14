@@ -26,10 +26,23 @@ describe('TelemetryAdapter', () => {
   test('records every telemetry event variant through one sink', () => {
     const seen: TelemetryEvent[] = [];
     const adapter: TelemetryAdapter = { record: (event) => void seen.push(event) };
-    const widget = { source: 'local', tag: 'acme-chart' } as const;
+    const widgetID = { source: 'local', tag: 'acme-chart' } as const;
 
-    adapter.record({ type: 'widget.error', widget, error: new Error('boom') });
-    adapter.record({ type: 'widget.latency', widget, phase: 'mount', durationMs: 42 });
+    adapter.record({
+      type: 'widget.error',
+      instanceId: 'w1',
+      widgetID,
+      reason: 'threw',
+      error: new Error('boom'),
+    });
+    adapter.record({
+      type: 'widget.latency',
+      instanceId: 'w1',
+      widgetID,
+      phase: 'settled',
+      elapsedMs: 42,
+      exceeded: false,
+    });
     adapter.record(refusal);
 
     expect(seen.map((e) => e.type)).toEqual([
