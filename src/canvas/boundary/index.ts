@@ -39,5 +39,6 @@ export type {
   WidgetInstanceIdentity,
   WidgetLatencyEvent,
   WidgetLatencyPhase,
+  WidgetRecoveryEvent,
   WidgetTelemetry,
 } from './telemetry.js';
