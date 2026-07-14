@@ -28,10 +28,30 @@ carry; each assignment re-renders synchronously:
 Read-back helpers: `mountedInstanceIds`, `widgetElement(i)`, and `geometryOf(i)`
 (the live `{x,y,w,h,i}` — the POC geometry, unchanged).
 
-> Scope: this element is the **mounting + lifecycle foundation**. Edit-mode
-> authoring (drag/resize/add/remove/tabs, #18), the keyboard alternative and
-> richer a11y (#19), the per-widget error boundary and skeletons (#20), and
-> virtualization + debounced writes (#21) build on it.
+In edit mode the element dispatches a **`gm:geometry-change`** `CustomEvent`
+(`CANVAS_GEOMETRY_CHANGE_EVENT`) after a **user** drag or resize settles, with
+`detail.geometry` carrying every item's post-edit `{x,y,w,h,i}`. Only pointer
+edits fire it — the canvas's own programmatic re-render (a `layout` assignment)
+does not — so a consumer can round-trip the edit back into `layout` without a
+feedback loop. This is the hook the edit-mode controller listens on.
+
+## Edit mode (`edit-mode`, #18)
+
+`EditController` (`@gridmason/core/canvas`) drives an authoring session over a
+`PageCanvas`: `enter()`/`exit()` toggle edit mode; drag/resize arrive via the
+geometry-change event; `addWidget` first-fits a new instance (its eligible list
+comes from the C-E2 picker gating); `removeWidget` tears one down; `addTab`/
+`renameTab`/`switchTab` author tabs when the page type allows them. Every edit
+forks a personal copy on first genuine change (copy-on-write, SPEC §5) and is
+written back through a `LayoutPersistencePort` (`put(scopeKey, doc)`); a **locked
+slot** is never offered a move/resize/remove. The controller drives the canvas
+only through `layout`/`editMode`/`activeTab` and the geometry-change event — it
+never touches gridstack — so the engine's DOM-free split holds.
+
+> Scope: this element is the **mounting + lifecycle foundation**; edit-mode
+> authoring (#18) builds on it. The keyboard alternative and richer a11y (#19),
+> the per-widget error boundary and skeletons (#20), and virtualization +
+> debounced writes (#21) build on it too.
 
 ## Widget ABI — what a widget receives
 
