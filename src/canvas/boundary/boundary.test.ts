@@ -92,6 +92,9 @@ function input(tag: string, i: string, over: Partial<BoundaryMountInput> = {}): 
   };
 }
 
+/** Drain all pending microtasks (e.g. a `customElements.whenDefined` resolution and its `.then`). */
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
 beforeEach(() => {
   document.body.innerHTML = '';
   events.length = 0;
@@ -218,6 +221,96 @@ test('an unresolved tag is named when the host descriptor entitles it', () => {
   const mgr = makeManager({ describe: () => 'Known Widget' });
   const b = mgr.mount(makeHost(), input('bt-not-defined', 'w1'));
   expect(b.root.querySelector(`.${BOUNDARY_CLASS.fallbackTitle}`)?.textContent).toBe('Known Widget');
+});
+
+// Auto-recovery for the layout-before-define race (issue #79): a layout may render
+// before a widget's `customElements.define` runs. The boundary waits on
+// `whenDefined(tag)` and re-mounts once the tag is defined — but only for the
+// unresolved-tag failure, and only while the boundary is still alive and unresolved.
+
+test('a widget mounted before its tag is defined auto-recovers when the tag is defined later', async () => {
+  const mgr = makeManager();
+  const b = mgr.mount(makeHost(), input('bt-late', 'w1'));
+  expect(b.state).toBe('error');
+  expect(events).toContainEqual(expect.objectContaining({ type: 'widget.error', reason: 'unresolved' }));
+
+  // The define lands after the layout rendered (a slow / code-split widget bundle).
+  class LateWidget extends HTMLElement {
+    connectedCallback(): void {
+      this.textContent = 'late';
+    }
+  }
+  customElements.define('bt-late', LateWidget);
+  await flush();
+
+  expect(b.state).toBe('ready');
+  expect(mgr.widgetElement('w1')?.textContent).toBe('late');
+  expect(b.root.querySelector(`.${BOUNDARY_CLASS.fallback}`)).toBeNull();
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      type: 'widget.recovery',
+      reason: 'unresolved',
+      instanceId: 'w1',
+      widgetID: { source: 'local', tag: 'bt-late' },
+    }),
+  );
+});
+
+test('a tag defined after the boundary is unmounted does not re-mount it', async () => {
+  const mgr = makeManager();
+  const host = makeHost();
+  mgr.mount(host, input('bt-late-disposed', 'w1'));
+  mgr.unmount('w1');
+  events.length = 0;
+
+  class DisposedWidget extends HTMLElement {
+    connectedCallback(): void {
+      this.textContent = 'should-not-mount';
+    }
+  }
+  customElements.define('bt-late-disposed', DisposedWidget);
+  await flush();
+
+  // The boundary stays torn down: no widget mounted, no recovery emitted.
+  expect(host.childElementCount).toBe(0);
+  expect(mgr.widgetElement('w1')).toBeUndefined();
+  expect(events).toEqual([]);
+});
+
+test('a crash failure is not auto-retried even though its tag is defined', async () => {
+  const mgr = makeManager();
+  const b = mgr.mount(makeHost(), input('bt-throw-connect', 'w1'));
+  expect(b.state).toBe('error');
+
+  await flush();
+
+  // Only the unresolved-tag path auto-recovers; a widget that threw stays down
+  // until a manual retry — it never subscribes to `whenDefined`.
+  expect(b.state).toBe('error');
+  expect(events.filter((e) => e.type === 'widget.error')).toHaveLength(1);
+  expect(events.some((e) => e.type === 'widget.recovery')).toBe(false);
+});
+
+test('an auto-recovery that re-mounts into a crash falls back once and does not loop', async () => {
+  const mgr = makeManager();
+  const b = mgr.mount(makeHost(), input('bt-late-crash', 'w1'));
+  expect(b.state).toBe('error');
+
+  class LateCrashWidget extends HTMLElement {
+    connectedCallback(): void {
+      throw new Error('late-crash');
+    }
+  }
+  customElements.define('bt-late-crash', LateCrashWidget);
+  await flush();
+
+  // The define drove exactly one recovery attempt, which crashed: the boundary is
+  // now a plain `threw` failure and is not re-mounted again on the resolved define.
+  expect(b.state).toBe('error');
+  expect(events.filter((e) => e.type === 'widget.recovery')).toHaveLength(1);
+  expect(events).toContainEqual(
+    expect.objectContaining({ type: 'widget.error', reason: 'threw', message: 'late-crash' }),
+  );
 });
 
 test('a widget that dispatches gm:error falls back with reason "reported"', () => {

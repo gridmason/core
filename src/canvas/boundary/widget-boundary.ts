@@ -27,7 +27,13 @@
  * A widget whose tag was **never defined** in the registry is an entitled *load
  * failure* (`unresolved`) and goes straight to the fallback — unlike a *gated-off*
  * instance, which the engine omits from the effective layout entirely and so
- * never reaches a boundary (SPEC §6: no card, no capability leakage).
+ * never reaches a boundary (SPEC §6: no card, no capability leakage). This failure
+ * is not permanent: a layout can legitimately render **before** its widgets'
+ * `customElements.define` runs (a slow remote, code-split bundle, or race). The
+ * boundary waits on `customElements.whenDefined(tag)` and, once the tag is defined,
+ * auto-re-mounts the widget — upgrading the unavailable card to the live widget with
+ * no user action. Auto-recovery is scoped to *this* failure: a widget that threw or
+ * timed out is not re-mounted on a define, only the manual retry re-runs it.
  *
  * ## Retry
  *
@@ -149,6 +155,22 @@ export class WidgetBoundary {
    * *recovery* worth announcing — a first, never-failed mount is not.
    */
   #everErrored = false;
+  /**
+   * Whether the boundary is currently sitting in the **unresolved-tag** error
+   * state — the one failure a later `customElements.define` auto-recovers. Set true
+   * only by an `unresolved` {@link WidgetBoundary.#enterError}; a `threw` / `reported`
+   * / `timeout` failure sets it false, so a define never re-mounts a crashing widget.
+   */
+  #awaitingTagDefine = false;
+  /**
+   * Whether we have already subscribed to `customElements.whenDefined(tag)` for
+   * this boundary. A boundary's tag is fixed (an identity change needs a fresh
+   * boundary), so one subscription suffices for its whole life — this guards
+   * against stacking a new subscription on every failed retry of the same tag.
+   */
+  #defineWatchStarted = false;
+  /** Set once {@link WidgetBoundary.unmount} tears the boundary down; a pending `whenDefined` then no-ops. */
+  #disposed = false;
   #budgetTimer: ReturnType<typeof setTimeout> | undefined;
   #retryButton: HTMLButtonElement | undefined;
 
@@ -224,6 +246,7 @@ export class WidgetBoundary {
    * and remove the container from the DOM. Safe to call more than once.
    */
   unmount(): void {
+    this.#disposed = true;
     this.#clearBudget();
     this.#deps.mounts.unmount(this.#input.instanceId);
     this.#root.removeEventListener(WIDGET_EVENT.loading, this.#onLoading);
@@ -347,6 +370,9 @@ export class WidgetBoundary {
     // mid-connect the element was never tracked, so clear the slot to detach it.
     if (!this.#deps.mounts.unmount(this.#input.instanceId)) this.#slot.replaceChildren();
     this.#everErrored = true;
+    // Only an unresolved tag is auto-recoverable when it is later defined; a widget
+    // that threw/reported/timed out stays down until a manual retry.
+    this.#awaitingTagDefine = reason === 'unresolved';
     this.#setState('error');
     this.#renderCard(reason);
     this.#emit({
@@ -360,6 +386,28 @@ export class WidgetBoundary {
     // failures. The card's own `role="alert"` is suppressed when a sink is wired
     // (see `#renderCard`), so this is the single announcement, not a duplicate.
     this.#announce(reason === 'timeout' ? widgetTimedOut(this.#name()) : widgetUnavailable(this.#name()));
+    if (this.#awaitingTagDefine) this.#watchForDefine();
+  }
+
+  /**
+   * Subscribe (once) to `customElements.whenDefined(tag)` so an unresolved-tag
+   * failure heals when the tag is defined later — the layout-before-define race. On
+   * resolve, if the boundary is still alive and still in the unresolved-tag error
+   * state, report the recovery and re-run the mount (the manual-retry path). A
+   * `whenDefined` promise never rejects and resolves once, so a liveness + state
+   * check inside the handler is all the guarding it needs.
+   */
+  #watchForDefine(): void {
+    if (this.#defineWatchStarted) return;
+    const registry = this.#customElements();
+    if (registry === undefined) return;
+    this.#defineWatchStarted = true;
+    void registry.whenDefined(this.#input.tag).then(() => {
+      if (this.#disposed || this.#state !== 'error' || !this.#awaitingTagDefine) return;
+      this.#awaitingTagDefine = false;
+      this.#emit({ type: 'widget.recovery', ...this.#identity(), reason: 'unresolved' });
+      this.#beginMount();
+    });
   }
 
   /** Arm the latency-budget timer for a pending widget; idempotent (re-arms). */
@@ -448,11 +496,15 @@ export class WidgetBoundary {
     return Math.max(0, this.#deps.now() - this.#mountStart);
   }
 
+  /** The custom-element registry to consult, or `undefined` when none is reachable. */
+  #customElements(): CustomElementRegistry | undefined {
+    const view = this.#deps.ownerDocument.defaultView;
+    return view?.customElements ?? (typeof customElements !== 'undefined' ? customElements : undefined);
+  }
+
   /** Whether the widget's custom-element tag is defined in the document's registry. */
   #tagDefined(): boolean {
-    const view = this.#deps.ownerDocument.defaultView;
-    const registry =
-      view?.customElements ?? (typeof customElements !== 'undefined' ? customElements : undefined);
+    const registry = this.#customElements();
     // No registry to consult (unusual) — assume defined and let mount proceed.
     return registry === undefined || registry.get(this.#input.tag) !== undefined;
   }

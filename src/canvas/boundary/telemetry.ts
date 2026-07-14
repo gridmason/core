@@ -98,10 +98,28 @@ export interface WidgetLatencyEvent extends WidgetInstanceIdentity {
 }
 
 /**
- * Every event the per-widget boundary emits to the telemetry port: a failure
- * ({@link WidgetErrorEvent}) or a latency measurement ({@link WidgetLatencyEvent}).
+ * A widget instance that had fallen back with `unresolved` (its custom-element tag
+ * was undefined at mount) **auto-recovered**: the tag was defined later — via a
+ * `customElements.define` the boundary was waiting on — and the boundary re-mounted
+ * the widget. Emitted once, at the moment the define is observed and the re-mount
+ * is triggered, mirroring the {@link WidgetErrorEvent} it recovers from. Lets a
+ * host observe (and alert on) the layout-before-define race healing itself — a
+ * signal distinct from a manual retry, which surfaces only as a later `settled`
+ * {@link WidgetLatencyEvent}.
  */
-export type WidgetBoundaryEvent = WidgetErrorEvent | WidgetLatencyEvent;
+export interface WidgetRecoveryEvent extends WidgetInstanceIdentity {
+  /** Stable discriminator for telemetry pipelines. */
+  readonly type: 'widget.recovery';
+  /** The failure the widget auto-recovered from — currently only `unresolved` auto-recovers. */
+  readonly reason: Extract<WidgetFailureReason, 'unresolved'>;
+}
+
+/**
+ * Every event the per-widget boundary emits to the telemetry port: a failure
+ * ({@link WidgetErrorEvent}), a latency measurement ({@link WidgetLatencyEvent}),
+ * or an auto-recovery ({@link WidgetRecoveryEvent}).
+ */
+export type WidgetBoundaryEvent = WidgetErrorEvent | WidgetLatencyEvent | WidgetRecoveryEvent;
 
 /**
  * The telemetry sink the boundary emits to (SPEC §7). A plain function, shaped
