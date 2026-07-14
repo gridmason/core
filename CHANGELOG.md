@@ -1,5 +1,144 @@
 # @gridmason/core
 
+## 0.3.0
+
+### Minor Changes
+
+- 5f3dc07: feat(canvas): edit mode — drag/resize/add/remove/tabs with copy-on-write persistence (FR-9)
+
+  Adds the `edit-mode` submodule of the canvas layer (`@gridmason/core/canvas`): an
+  `EditController` that drives an authoring session over a `PageCanvas`. Entering
+  edit mode enables gridstack drag/resize; the controller folds settled user
+  edits — surfaced by the canvas as a new `gm:geometry-change` event — back into
+  the layout, and offers add (first-fit placement via the engine, gated by the
+  C-E2 picker checks), remove, and tab create/rename/switch. Every edit forks a
+  personal copy on the first genuine change (copy-on-write, FR-5) and is written
+  back through a `LayoutPersistencePort` (`put(scopeKey, doc)`, a subset of the
+  C-E4 persistence adapter); locked slots are never offered a move/resize/remove
+  (SPEC §5). Also fills the engine `placement` module with first-fit auto-placement
+  (`placeFirstFit`/`firstFitPosition`), and `PageCanvas` now emits
+  `CANVAS_GEOMETRY_CHANGE_EVENT` for user drag/resize. The keyboard alternative +
+  a11y announcements (#19), the per-widget error boundary (#20), and virtualization
+
+  - debounced writes (#21) are sibling C-E3 issues that build on this.
+
+- d781be9: feat(canvas): keyboard alternative + a11y landmarks + live-region announcements (FR-9)
+
+  Adds the `edit-mode/a11y` layer of the canvas (`@gridmason/core/canvas`) so the
+  canvas holds WCAG 2.1 AA in edit mode. A `CanvasKeyboardController` gives every
+  pointer edit a keyboard-only path: a focused widget enters **move-mode** (Enter /
+  Space), then the arrow keys move it one grid cell and Shift + the arrow keys
+  resize it, with Enter to drop and Escape to restore; Delete / Backspace removes
+  the focused widget. Each step commits down the **same** path a pointer drag uses
+  (a `gm:geometry-change` event folded into the layout by the `EditController`,
+  forked copy-on-write and persisted) — no parallel mutation logic. Add and tab
+  operations are exposed as announced controller methods for host toolbars.
+
+  Every grid item becomes a focusable landmark (`role="group"`, an accessible name,
+  `tabindex="0"`), and a `LiveAnnouncer` (a visually-hidden `role="status"` region)
+  narrates each operation — entering move-mode, moving/resizing by cell, dropping,
+  cancelling, adding, removing, and tab switching. Focus is rescued to a neighbour
+  whenever a removal or tab switch would otherwise strand it on a detached node
+  (the C-E3 lifecycle guarantee). Wire it in one call with
+  `attachCanvasKeyboardA11y(canvas, editController, { labelFor })`.
+
+  `PageCanvas` gains an additive `gm:rendered` event and an `itemElement()`
+  accessor for the a11y layer to hook, and now names its `region` landmark. Ships a
+  keyboard-only Playwright e2e (move + resize with no mouse) and wires
+  `@axe-core/playwright` into the canvas e2e run, asserting no WCAG 2.1 AA
+  violations in edit mode. The per-widget error boundary (#20) and virtualization
+  (#21) remain sibling C-E3 issues.
+
+- 699fb3c: feat(canvas): PageCanvas gridstack binding + custom-element mounting (FR-8, FR-11)
+
+  Adds the `<gm-page-canvas>` custom element (`PageCanvas`) — the gridstack.js
+  binding and the only DOM consumer in core. It renders a resolved
+  `EffectiveLayout`, mounting one widget custom element per placed item with the
+  widget ABI (`context`, `settings`, `instance-id`, `edit-mode` attributes plus the
+  opaque `sdk` handle property) and the POC `{x,y,w,h,i}` geometry. A
+  `WidgetMountManager` upholds the lifecycle guarantee that `disconnectedCallback`
+  runs before an instance is removed or re-mounted (layout change, tab switch, gate
+  flip). Exported from `@gridmason/core/canvas` (and the root barrel). Edit-mode
+  authoring, keyboard/a11y, error boundaries, and virtualization are sibling C-E3
+  issues that build on this foundation.
+
+- 24d9091: feat(canvas): offscreen-widget virtualization, debounced layout writes, and canvas-interactive perf marks (FR-15)
+
+  Adds the canvas performance layer (`@gridmason/core/canvas`, SPEC §7):
+
+  - **Virtualization** — `CanvasVirtualizer` watches each placed grid item with an
+    `IntersectionObserver` and drives `PageCanvas` to mount a widget only while its
+    cell is near the viewport, tearing it down (through the same boundary/lifecycle
+    path, so `disconnectedCallback` is honored) when it scrolls away. Opt in with
+    the new `PageCanvas.virtualize` property (`virtualizeRootMargin` tunes the
+    near-viewport band; `virtualizeObserverFactory` injects a custom scroll root or
+    a test observer). Off by default — every widget mounts eagerly. A long page's
+    interactive cost stays bounded by what fits on screen; grid items (and thus
+    geometry/height) are always placed, so only the widget content is deferred.
+  - **Debounced writes** — `DebouncedLayoutPersistence` decorates a host
+    `LayoutPersistencePort`, coalescing a burst of rapid layout writes (a drag/resize
+    gesture) into a single trailing `put(scopeKey, doc)` of the latest document,
+    per scope key. `flush()`/`cancel()` force or drop pending writes at a boundary
+    (blur, navigation, edit exit); an optional `maxWaitMs` caps a continuous burst.
+    A host wraps its adapter and passes it to `EditController` unchanged.
+  - **Perf marks** — `CanvasPerfMarker` times the data→interactive window (layout
+    assigned → render settled) and emits it as a `canvas.interactive` telemetry
+    event via the new `PageCanvas.perfTelemetry` sink — the attribution point for
+    the **p95 < 300 ms** budget — while also recording `performance.mark`/`measure`
+    User Timing entries for a devtools trace.
+
+  Also adds a headless-variance-tolerant **CI perf smoke** (`perf/`): a fixed
+  100-widget fixture, a Playwright harness that warms up then asserts the p95 of N
+  steady-state canvas-interactive measurements against a CI-adjusted budget
+  (`GM_PERF_BUDGET_MS`, default 300 ms), run via `npm run perf`; methodology
+  documented in `perf/README.md`.
+
+- 18ff3b3: fix(canvas): keyboard landmarks for widgets mounted lazily under virtualization
+
+  With `PageCanvas.virtualize` on, a widget mounted lazily as it scrolled into view
+  never became a keyboard landmark: the a11y layer only (re)applied landmarks on the
+  full-render `gm:rendered` event, but a virtualizer mount happens _between_ renders,
+  so a scrolled-in widget stayed unfocusable / not tab-reachable until an unrelated
+  full render.
+
+  `PageCanvas` now dispatches two additive, per-widget lifecycle events under
+  virtualization — **`gm:widget-mounted`** (`CANVAS_WIDGET_MOUNTED_EVENT`) and
+  **`gm:widget-unmounted`** (`CANVAS_WIDGET_UNMOUNTED_EVENT`), each with
+  `detail.instanceId` (`CanvasWidgetLifecycleDetail`) — the scroll-driven complement
+  to `gm:rendered`. The keyboard/a11y controller listens for them: it landmarks a
+  lazily-mounted widget at once (so a scrolled-in widget is immediately keyboard-
+  reachable) and, on unmount, rescues focus if the scrolled-out widget held it and
+  then drops its landmark. A keyboard landmark now tracks mount state — an offscreen,
+  torn-down widget is not a Tab stop and regains its landmark when scrolled back in.
+
+  Also reconciles the `CanvasRenderedDetail.instanceIds` doc: it is every instance
+  **placed** on the active grid (in placement order), not the mounted subset — under
+  virtualization a placed item may be offscreen and unmounted yet still listed
+  (read `mountedInstanceIds` for the mounted subset). Payload unchanged.
+
+- e1d9405: feat(canvas): per-widget error boundary + skeletons + telemetry attribution (FR-10)
+
+  Wraps every mounted widget in a per-widget error boundary (`src/canvas/boundary`).
+  A widget that throws, fails to load, dispatches `gm:error`, or exceeds its latency
+  budget is isolated behind a fallback card (name + retry) while its siblings and the
+  rest of the canvas stay live — one widget's failure never takes the page down, and
+  the canvas never blocks on widget code. A widget that signals `gm:loading` (or sets
+  the `gm-loading` attribute) during connect shows an accessible loading skeleton
+  until it dispatches `gm:ready`.
+
+  Fallback cards name the widget only when the host's `widgetDescriptor` entitles it;
+  an unknown/unresolved tag renders an anonymous "Unavailable widget" card with no
+  tag/name echo (SPEC §6/§8 no-capability-leakage), and a gated-off instance — already
+  omitted from the effective layout by the engine — never surfaces a card. Crashing
+  `connectedCallback`s are caught however the environment surfaces them (propagated,
+  or reported to the window `error` event as in real browsers).
+
+  `PageCanvas` gains `telemetry`, `widgetDescriptor`, `latencyBudgetMs`,
+  `autoDegradeOnLatency`, and `boundaryOf(i)`. The canvas-local `WidgetTelemetry`
+  port emits per-widget `widget.error` / `widget.latency` events carrying the
+  instance's source-qualified identity; it mirrors the engine's `CatalogTelemetry`
+  shape and folds into the finalized C-E4 telemetry adapter when it lands.
+
 ## 0.2.0
 
 ### Minor Changes
