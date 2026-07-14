@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>PageCanvas e2e fixture</title>
+    <link rel="stylesheet" href="/node_modules/gridstack/dist/gridstack.css" />
+    <!--
+      Resolve the bare specifiers the built canvas ESM imports without a bundler:
+      `gridstack` → a shim re-exporting the UMD global set by gridstack-all.js
+      below, and `@gridmason/protocol` → its self-contained ESM dist (the canvas
+      barrel re-exports the edit-mode module, whose engine layer imports protocol
+      at runtime).
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "gridstack": "data:text/javascript,export const GridStack=window.GridStack;export default window.GridStack;",
+          "@gridmason/protocol": "/node_modules/@gridmason/protocol/dist/index.js"
+        }
+      }
+    </script>
+    <!-- Classic script: runs synchronously before the module graph, setting window.GridStack. -->
+    <script src="/node_modules/gridstack/dist/gridstack-all.js"></script>
+  </head>
+  <body>
+    <main id="app"></main>
+    <script type="module">
+      import { PageCanvas } from '/dist/canvas/index.js';
+
+      // Ordered lifecycle log the spec asserts against.
+      window.__lifecycle = [];
+
+      // A minimal vanilla test widget (the kind a host registers). It records
+      // connect/disconnect with its instance id so the spec can prove ordering
+      // and the guaranteed disconnect-before-remount.
+      class E2EWidget extends HTMLElement {
+        connectedCallback() {
+          window.__lifecycle.push(`connected:${this.localName}:${this.getAttribute('instance-id')}`);
+        }
+        disconnectedCallback() {
+          window.__lifecycle.push(`disconnected:${this.localName}:${this.getAttribute('instance-id')}`);
+        }
+      }
+      customElements.define('gm-e2e-widget', E2EWidget);
+      customElements.define('gm-e2e-widget-b', class extends E2EWidget {});
+      PageCanvas.define();
+
+      const id = (tag) => ({ source: 'local', tag });
+      const item = (i, over = {}) => ({ widgetID: id('gm-e2e-widget'), i, x: 0, y: 0, w: 4, h: 3, ...over });
+      const single = (items) => ({
+        layout: { schemaVersion: 1, page: 'demo', name: 'Demo', default: true, grid: { items }, hasTabs: false, tabs: [] },
+        lockedSlots: [],
+      });
+      const tabbed = (tabs) => ({
+        layout: {
+          schemaVersion: 1,
+          page: 'demo',
+          name: 'Demo',
+          default: true,
+          grid: { items: [] },
+          hasTabs: true,
+          tabs: tabs.map((t) => ({ name: t.name, grid: { items: t.items } })),
+        },
+        lockedSlots: [],
+      });
+
+      const canvas = document.createElement(PageCanvas.tagName);
+      canvas.context = { record: { recordType: 'customer', id: '42' } };
+      canvas.sdk = { bus: 'e2e-handle' };
+      canvas.layout = single([item('w1', { props: { range: '30d' } })]);
+      document.getElementById('app').appendChild(canvas);
+
+      // Control surface the spec drives via page.evaluate.
+      window.__gm = {
+        resetLog: () => {
+          window.__lifecycle.length = 0;
+        },
+        lifecycle: () => window.__lifecycle.slice(),
+        mounted: () => canvas.mountedInstanceIds,
+        geometry: (i) => canvas.geometryOf(i),
+        attrs: (i) => {
+          const el = canvas.widgetElement(i);
+          if (!el) return null;
+          return {
+            tag: el.localName,
+            instanceId: el.getAttribute('instance-id'),
+            context: el.getAttribute('context'),
+            settings: el.getAttribute('settings'),
+            editMode: el.hasAttribute('edit-mode'),
+            hasSdk: Boolean(el.sdk),
+          };
+        },
+        // Layout change: swap the single grid to a different widget instance.
+        layoutSwap: () => {
+          canvas.layout = single([item('w2', { x: 4 })]);
+        },
+        // Tab switch across a tabbed layout.
+        loadTabs: () => {
+          canvas.layout = tabbed([
+            { name: 'Overview', items: [item('w1')] },
+            { name: 'Details', items: [item('w2')] },
+          ]);
+        },
+        activeTab: (n) => {
+          canvas.activeTab = n;
+        },
+        setEditMode: (on) => {
+          canvas.editMode = on;
+        },
+      };
+
+      window.__gm_ready = true;
+    </script>
+  </body>
+</html>

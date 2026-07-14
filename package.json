@@ -49,16 +49,18 @@
     "storybook": "node .storybook/stub.mjs",
     "build-storybook": "node .storybook/stub.mjs",
     "e2e": "playwright test",
+    "perf": "playwright test -c perf/perf.config.ts",
     "prepublishOnly": "npm run build",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "changeset publish"
   },
   "dependencies": {
-    "gridstack": "12.6.0",
-    "@gridmason/protocol": "^0.0.2"
+    "@gridmason/protocol": "^0.0.2",
+    "gridstack": "12.6.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
     "@changesets/cli": "^2.31.0",
     "@eslint/js": "10.0.1",
     "@playwright/test": "1.61.1",
