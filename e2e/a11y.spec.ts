@@ -24,6 +24,9 @@ interface GmA11y {
   loadDefault(): void;
   loadLocked(): void;
   loadTabbed(): void;
+  loadVirtualized(): void;
+  scrollToItem(i: string): void;
+  landmark(i: string): { instance: string | null; tabindex: string | null } | null;
   add(): string;
   remove(i: string): boolean;
   focus(i: string): void;
@@ -122,6 +125,68 @@ test('focus is preserved (not lost to a detached node) when the focused widget i
   // Focus moved to the surviving widget — never left on the detached node or body.
   expect(await page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.activeConnected())).toBe(true);
   expect(await page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.activeInstance())).toBe('w2');
+});
+
+test('virtualize + a11y: a widget mounted lazily on scroll gains a landmark and is Tab-reachable', async ({
+  page,
+}) => {
+  await page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.loadVirtualized());
+
+  // w1 (near the top) mounts once the IntersectionObserver settles and the a11y
+  // layer landmarks it. w3 is placed far down the page: poll until it has settled
+  // as *not* mounted (a virtualized offscreen item), which — landmark tracking
+  // mount state — means it carries no keyboard landmark.
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.mounted().includes('w1')))
+    .toBe(true);
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.mounted().includes('w3')))
+    .toBe(false);
+  expect(await page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.landmark('w3'))).toEqual({
+    instance: null,
+    tabindex: null,
+  });
+
+  // Scroll w3 into view → the virtualizer mounts it → the a11y layer landmarks it.
+  // This is the regression: before the fix a lazily-mounted widget never became a
+  // landmark (mountedInstanceIds was empty at render time and no mount event fired).
+  // Re-assert the scroll each poll: the IntersectionObserver mounts asynchronously
+  // and gridstack positions items with transforms, so one scrollIntoView may not
+  // land w3 in the band — keep scrolling to it until it mounts.
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const a11y = (window as unknown as GmWindow).__gm_a11y;
+        a11y.scrollToItem('w3');
+        return a11y.mounted().includes('w3');
+      }),
+    )
+    .toBe(true);
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.landmark('w3')?.instance))
+    .toBe('w3');
+  expect(await page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.landmark('w3'))).toEqual({
+    instance: 'w3',
+    tabindex: '0',
+  });
+
+  // Tab-reachable: w2 sits just above w3 and co-mounts with it (both centred in
+  // view), so tabbing forward from the now-mounted w2 reaches w3 — proving the
+  // freshly-landmarked widget is in the sequential tab order. Tab forward until we
+  // land on it (gridstack interleaves a focusable `.grid-stack-item-content` scroll
+  // container between items, so w3 is a couple of tab stops past w2, not exactly one).
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.mounted().includes('w2')))
+    .toBe(true);
+  await page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.focus('w2'));
+  let reachedW3 = false;
+  for (let step = 0; step < 5 && !reachedW3; step += 1) {
+    await page.keyboard.press('Tab');
+    reachedW3 = await page.evaluate(
+      () => (window as unknown as GmWindow).__gm_a11y.activeInstance() === 'w3',
+    );
+  }
+  expect(reachedW3).toBe(true);
 });
 
 test('focus is preserved across a tab switch that unmounts the focused widget', async ({ page }) => {

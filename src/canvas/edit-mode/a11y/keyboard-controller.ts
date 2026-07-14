@@ -33,10 +33,28 @@
  * landmarks and, if the focused widget was just removed or unmounted by a tab
  * switch, moves focus to a stable neighbour — so focus is never stranded on a
  * detached node (the C-E3 lifecycle guarantee, SPEC §4).
+ *
+ * Virtualization (#21) mounts and unmounts widgets *between* renders as the page
+ * scrolls, so the controller also listens for the per-widget
+ * {@link CANVAS_WIDGET_MOUNTED_EVENT} — landmark the newly-mounted item so a
+ * scrolled-in widget is keyboard-reachable at once, not only after some later
+ * full render — and {@link CANVAS_WIDGET_UNMOUNTED_EVENT} — rescue focus if the
+ * scrolled-out widget held it, then drop its landmark. A landmark tracks mount
+ * state: an offscreen, torn-down widget is not a Tab stop, and regains its
+ * landmark when it scrolls back in.
  */
 import type { AddWidgetInput } from '../edit-controller.js';
-import { CANVAS_GEOMETRY_CHANGE_EVENT, CANVAS_RENDERED_EVENT } from '../../PageCanvas/index.js';
-import type { CanvasGeometryChangeDetail, WidgetGeometry } from '../../PageCanvas/index.js';
+import {
+  CANVAS_GEOMETRY_CHANGE_EVENT,
+  CANVAS_RENDERED_EVENT,
+  CANVAS_WIDGET_MOUNTED_EVENT,
+  CANVAS_WIDGET_UNMOUNTED_EVENT,
+} from '../../PageCanvas/index.js';
+import type {
+  CanvasGeometryChangeDetail,
+  CanvasWidgetLifecycleDetail,
+  WidgetGeometry,
+} from '../../PageCanvas/index.js';
 import type { LayoutWidget, GridSize } from '@gridmason/protocol';
 
 import type { GridRect } from '../../../engine/placement/index.js';
@@ -145,6 +163,8 @@ export class CanvasKeyboardController {
     this.#canvas.addEventListener('keydown', this.#onKeydown);
     this.#canvas.addEventListener('focusin', this.#onFocusIn);
     this.#canvas.addEventListener(CANVAS_RENDERED_EVENT, this.#onRendered);
+    this.#canvas.addEventListener(CANVAS_WIDGET_MOUNTED_EVENT, this.#onWidgetMounted);
+    this.#canvas.addEventListener(CANVAS_WIDGET_UNMOUNTED_EVENT, this.#onWidgetUnmounted);
     // Decorate whatever is already rendered so the first Tab lands on a landmark.
     this.#applyLandmarks();
   }
@@ -211,6 +231,8 @@ export class CanvasKeyboardController {
     this.#canvas.removeEventListener('keydown', this.#onKeydown);
     this.#canvas.removeEventListener('focusin', this.#onFocusIn);
     this.#canvas.removeEventListener(CANVAS_RENDERED_EVENT, this.#onRendered);
+    this.#canvas.removeEventListener(CANVAS_WIDGET_MOUNTED_EVENT, this.#onWidgetMounted);
+    this.#canvas.removeEventListener(CANVAS_WIDGET_UNMOUNTED_EVENT, this.#onWidgetUnmounted);
   }
 
   /** Route a key press to the operation it means, when the canvas is in edit mode and a widget is focused. */
@@ -347,15 +369,61 @@ export class CanvasKeyboardController {
     this.#rescueFocus();
   };
 
+  /**
+   * A widget the virtualizer mounted lazily (scrolled into view) between renders:
+   * landmark it immediately so it becomes focusable/tab-reachable, instead of
+   * staying invisible to the keyboard until an unrelated full render (the bug this
+   * closes).
+   */
+  readonly #onWidgetMounted = (event: Event): void => {
+    const id = (event as CustomEvent<CanvasWidgetLifecycleDetail>).detail?.instanceId;
+    if (id === undefined) return;
+    this.#applyLandmark(id);
+  };
+
+  /**
+   * A widget the virtualizer unmounted lazily (scrolled out of view). A landmark
+   * tracks mount state — an offscreen, torn-down widget is not a keyboard target —
+   * so drop its landmark. First rescue focus (if this widget held it) *while its
+   * landmark is still present*, so {@link #focusStranded} can recognise the
+   * stranded focus and move it to a live neighbour; only then strip the landmark.
+   * {@link #rescueFocus} no-ops when the focused widget is still mounted, so an
+   * unrelated scroll-out costs only the strip. The widget regains its landmark
+   * when it scrolls back in ({@link CANVAS_WIDGET_MOUNTED_EVENT}).
+   */
+  readonly #onWidgetUnmounted = (event: Event): void => {
+    const id = (event as CustomEvent<CanvasWidgetLifecycleDetail>).detail?.instanceId;
+    if (id === undefined) return;
+    this.#rescueFocus();
+    this.#removeLandmark(id);
+  };
+
   /** Make every current grid item a focusable, named landmark for keyboard navigation. */
   #applyLandmarks(): void {
-    for (const id of this.#canvas.mountedInstanceIds) {
-      const el = this.#canvas.itemElement(id);
-      if (el === undefined) continue;
-      el.setAttribute('data-gm-instance', id);
-      if (el.getAttribute('tabindex') === null) el.setAttribute('tabindex', '0');
-      el.setAttribute('aria-label', this.#nameFor(id));
-    }
+    for (const id of this.#canvas.mountedInstanceIds) this.#applyLandmark(id);
+  }
+
+  /** Make one grid item a focusable, named landmark (idempotent). */
+  #applyLandmark(id: string): void {
+    const el = this.#canvas.itemElement(id);
+    if (el === undefined) return;
+    el.setAttribute('data-gm-instance', id);
+    if (el.getAttribute('tabindex') === null) el.setAttribute('tabindex', '0');
+    el.setAttribute('aria-label', this.#nameFor(id));
+  }
+
+  /**
+   * Strip the keyboard landmark this controller applied (its `data-gm-instance` /
+   * `tabindex` / `aria-label`), taking a virtualized-away item out of the Tab
+   * order. Leaves the canvas-owned `role`/`aria-roledescription` alone. A no-op if
+   * the item element is gone.
+   */
+  #removeLandmark(id: string): void {
+    const el = this.#canvas.itemElement(id);
+    if (el === undefined) return;
+    el.removeAttribute('data-gm-instance');
+    el.removeAttribute('tabindex');
+    el.removeAttribute('aria-label');
   }
 
   /**

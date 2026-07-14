@@ -6,7 +6,12 @@ import type { CanvasInteractiveEvent } from '../perf/index.js';
 import type { VirtualizerObserverEntry, VirtualizerObserverFactory } from '../virtualization/index.js';
 
 import { ABI_ATTR } from './abi.js';
-import { PageCanvas } from './page-canvas.js';
+import {
+  CANVAS_WIDGET_MOUNTED_EVENT,
+  CANVAS_WIDGET_UNMOUNTED_EVENT,
+  PageCanvas,
+} from './page-canvas.js';
+import type { CanvasWidgetLifecycleDetail } from './page-canvas.js';
 
 // Widgets recording connect/disconnect so a test can prove a virtualized widget
 // is mounted only while on screen and torn down (its disconnectedCallback fires)
@@ -112,6 +117,47 @@ test('virtualized: a widget leaving the viewport is unmounted (disconnectedCallb
   expect(canvas.mountedInstanceIds).toEqual(['b']);
   // The grid item survives so geometry/height are unaffected while offscreen.
   expect(canvas.geometryOf('a')).toMatchObject({ i: 'a' });
+});
+
+test('virtualized: a lazy mount/unmount dispatches gm:widget-mounted / gm:widget-unmounted for that instance', () => {
+  canvas.virtualize = true;
+  canvas.virtualizeObserverFactory = hub.factory;
+  const mounted: string[] = [];
+  const unmounted: string[] = [];
+  canvas.addEventListener(CANVAS_WIDGET_MOUNTED_EVENT, (e) =>
+    mounted.push((e as CustomEvent<CanvasWidgetLifecycleDetail>).detail.instanceId),
+  );
+  canvas.addEventListener(CANVAS_WIDGET_UNMOUNTED_EVENT, (e) =>
+    unmounted.push((e as CustomEvent<CanvasWidgetLifecycleDetail>).detail.instanceId),
+  );
+  canvas.layout = singleGrid([widget('a'), widget('b', { y: 100 })]);
+  document.body.appendChild(canvas);
+
+  // No lifecycle event at render time — nothing has scrolled into view yet.
+  expect(mounted).toEqual([]);
+  expect(unmounted).toEqual([]);
+
+  hub.enter(itemEl('a')); // scrolls into the band → lazy mount → one mounted event
+  expect(mounted).toEqual(['a']);
+  expect(unmounted).toEqual([]);
+
+  hub.leave(itemEl('a')); // scrolls out → lazy unmount → one unmounted event
+  expect(mounted).toEqual(['a']);
+  expect(unmounted).toEqual(['a']);
+});
+
+test('non-virtualized (default): eager mounts fire no per-widget lifecycle events', () => {
+  const mounted: string[] = [];
+  canvas.addEventListener(CANVAS_WIDGET_MOUNTED_EVENT, (e) =>
+    mounted.push((e as CustomEvent<CanvasWidgetLifecycleDetail>).detail.instanceId),
+  );
+  canvas.layout = singleGrid([widget('a'), widget('b')]);
+  document.body.appendChild(canvas);
+
+  // Eager mounts are covered by the render that places them (gm:rendered), so the
+  // per-widget virtualization event stays silent when virtualization is off.
+  expect([...canvas.mountedInstanceIds].sort()).toEqual(['a', 'b']);
+  expect(mounted).toEqual([]);
 });
 
 test('non-virtualized (default): every widget mounts eagerly', () => {

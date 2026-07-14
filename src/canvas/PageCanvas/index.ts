@@ -5,8 +5,19 @@
  * `disconnectedCallback`-before-reuse guarantee, and the widget-ABI surface a
  * widget author targets.
  */
-export { CANVAS_GEOMETRY_CHANGE_EVENT, CANVAS_RENDERED_EVENT, PageCanvas } from './page-canvas.js';
-export type { CanvasGeometryChangeDetail, CanvasRenderedDetail, WidgetGeometry } from './page-canvas.js';
+export {
+  CANVAS_GEOMETRY_CHANGE_EVENT,
+  CANVAS_RENDERED_EVENT,
+  CANVAS_WIDGET_MOUNTED_EVENT,
+  CANVAS_WIDGET_UNMOUNTED_EVENT,
+  PageCanvas,
+} from './page-canvas.js';
+export type {
+  CanvasGeometryChangeDetail,
+  CanvasRenderedDetail,
+  CanvasWidgetLifecycleDetail,
+  WidgetGeometry,
+} from './page-canvas.js';
 
 export { WidgetMountManager } from './mount-manager.js';
 export type { MountedWidget, WidgetMountManagerOptions } from './mount-manager.js';
