@@ -29,10 +29,12 @@
  *
  * ## Scope
  *
- * This element is the mounting + lifecycle foundation. Edit-mode drag/resize/add/
- * remove/tab authoring (#18), the keyboard alternative and richer a11y (#19), the
- * per-widget error boundary and skeletons (#20), and virtualization + debounced
- * writes (#21) build on it. `editMode` here reflects the `edit-mode` ABI
+ * This element is the mounting + lifecycle foundation. Every widget is mounted
+ * through a {@link WidgetBoundaryManager}, so a widget that throws, fails to load,
+ * or runs slow is isolated behind a fallback card / skeleton with per-widget
+ * error + latency telemetry (#20, see `../boundary`). Edit-mode drag/resize/add/
+ * remove/tab authoring (#18), the keyboard alternative and richer a11y (#19), and
+ * virtualization + debounced writes (#21) build on it. `editMode` here reflects the `edit-mode` ABI
  * attribute to widgets and toggles gridstack out of static mode; it does not yet
  * persist user edits (that is #18). `activeTab` selects which tab's grid renders
  * so a tab switch exercises the real mount/unmount path; tab *authoring* is #18.
@@ -43,9 +45,14 @@ import type { GridItemHTMLElement } from 'gridstack';
 import type { EffectiveLayout } from '../../engine/layout/index.js';
 import type { LayoutWidget } from '@gridmason/protocol';
 
-import type { WidgetAbiState, WidgetMountInput } from './abi.js';
-import { assignSdkHandle } from './abi.js';
-import { WidgetMountManager } from './mount-manager.js';
+import type { WidgetAbiState } from './abi.js';
+import { WidgetBoundaryManager } from '../boundary/index.js';
+import type {
+  BoundaryMountInput,
+  WidgetBoundaryConfig,
+  WidgetDescriptor,
+  WidgetTelemetry,
+} from '../boundary/index.js';
 
 /** The grid item geometry the canvas renders and reads back — the POC `{x,y,w,h,i}`. */
 export interface WidgetGeometry {
@@ -107,7 +114,7 @@ export class PageCanvas extends HTMLElementBase {
     }
   }
 
-  readonly #mounts = new WidgetMountManager();
+  readonly #boundaries = new WidgetBoundaryManager();
   /** Grid-item element per instance id — the join between a layout item and its gridstack node. */
   readonly #items = new Map<string, GridItemHTMLElement>();
 
@@ -119,6 +126,11 @@ export class PageCanvas extends HTMLElementBase {
   #sdk: unknown;
   #editMode = false;
   #activeTabIndex = 0;
+
+  #telemetry: WidgetTelemetry | undefined;
+  #widgetDescriptor: WidgetDescriptor | undefined;
+  #latencyBudgetMs: number | undefined;
+  #autoDegradeOnLatency = false;
 
   /** The resolved layout to render. Setting it re-renders the canvas synchronously. */
   get layout(): EffectiveLayout | undefined {
@@ -153,10 +165,7 @@ export class PageCanvas extends HTMLElementBase {
   }
   set sdk(value: unknown) {
     this.#sdk = value;
-    for (const instanceId of this.#mounts.instanceIds) {
-      const mounted = this.#mounts.get(instanceId);
-      if (mounted !== undefined) assignSdkHandle(mounted.element, value);
-    }
+    this.#boundaries.reassignSdk(value);
   }
 
   /**
@@ -187,14 +196,83 @@ export class PageCanvas extends HTMLElementBase {
     this.#render();
   }
 
-  /** The instance ids currently mounted on the active grid, in mount order. */
-  get mountedInstanceIds(): readonly string[] {
-    return this.#mounts.instanceIds;
+  /**
+   * The per-widget error-boundary telemetry sink: per-widget error + latency
+   * attribution (SPEC §7, FR-10). A host adapter supplies it; the canvas never
+   * inspects the events. Set it any time — it applies to the next mount/retry.
+   */
+  get telemetry(): WidgetTelemetry | undefined {
+    return this.#telemetry;
+  }
+  set telemetry(value: WidgetTelemetry | undefined) {
+    this.#telemetry = value;
+    this.#applyBoundaryConfig();
   }
 
-  /** The mounted widget element for `instanceId`, or `undefined` if not mounted. */
+  /**
+   * Resolves a display **name** for a widget instance's fallback card (SPEC §6/§8).
+   * Returns a name only for a widget the viewer is entitled to; an unresolved tag
+   * yields an anonymous card (no tag/name echo). Absent, every fallback card is
+   * anonymous — the safe default.
+   */
+  get widgetDescriptor(): WidgetDescriptor | undefined {
+    return this.#widgetDescriptor;
+  }
+  set widgetDescriptor(value: WidgetDescriptor | undefined) {
+    this.#widgetDescriptor = value;
+    this.#applyBoundaryConfig();
+  }
+
+  /**
+   * Latency budget (ms) a pending (skeleton) widget may take before a
+   * `widget.latency` `exceeded` event fires (SPEC §7). `undefined` / `0` disables
+   * the budget.
+   */
+  get latencyBudgetMs(): number | undefined {
+    return this.#latencyBudgetMs;
+  }
+  set latencyBudgetMs(value: number | undefined) {
+    this.#latencyBudgetMs = value;
+    this.#applyBoundaryConfig();
+  }
+
+  /**
+   * Whether a widget that exceeds its {@link latencyBudgetMs} is auto-degraded to
+   * its fallback card (SPEC §7 "host may auto-degrade"). Off by default: the
+   * boundary reports the breach and leaves the skeleton for the host to act on.
+   */
+  get autoDegradeOnLatency(): boolean {
+    return this.#autoDegradeOnLatency;
+  }
+  set autoDegradeOnLatency(value: boolean) {
+    this.#autoDegradeOnLatency = value;
+    this.#applyBoundaryConfig();
+  }
+
+  /** The instance ids currently mounted on the active grid, in mount order. */
+  get mountedInstanceIds(): readonly string[] {
+    return this.#boundaries.instanceIds;
+  }
+
+  /** The mounted widget element for `instanceId`, or `undefined` (unmounted / in its error state). */
   widgetElement(instanceId: string): HTMLElement | undefined {
-    return this.#mounts.get(instanceId)?.element;
+    return this.#boundaries.widgetElement(instanceId);
+  }
+
+  /** The error boundary for `instanceId` (state / fallback introspection), or `undefined`. */
+  boundaryOf(instanceId: string): ReturnType<WidgetBoundaryManager['get']> {
+    return this.#boundaries.get(instanceId);
+  }
+
+  /** Push the current boundary config (telemetry / descriptor / budget) into the boundary manager. */
+  #applyBoundaryConfig(): void {
+    const config: WidgetBoundaryConfig = {
+      ...(this.#telemetry !== undefined ? { telemetry: this.#telemetry } : {}),
+      ...(this.#widgetDescriptor !== undefined ? { describe: this.#widgetDescriptor } : {}),
+      ...(this.#latencyBudgetMs !== undefined ? { latencyBudgetMs: this.#latencyBudgetMs } : {}),
+      autoDegradeOnLatency: this.#autoDegradeOnLatency,
+    };
+    this.#boundaries.configure(config);
   }
 
   /**
@@ -279,7 +357,7 @@ export class PageCanvas extends HTMLElementBase {
 
   /** Destroy the grid and unmount all widgets; safe to call more than once. */
   #teardown(): void {
-    this.#mounts.unmountAll();
+    this.#boundaries.unmountAll();
     this.#items.clear();
     // destroy(false): drop gridstack's engine + listeners but leave our host div,
     // so a re-connect can re-init cleanly.
@@ -323,8 +401,8 @@ export class PageCanvas extends HTMLElementBase {
     // before any mount is what makes disconnect precede re-mount on a swap.
     for (const [instanceId] of [...this.#items]) {
       const want = desired.get(instanceId);
-      const mounted = this.#mounts.get(instanceId);
-      if (want === undefined || (mounted !== undefined && mounted.tag !== want.widgetID.tag)) {
+      const boundary = this.#boundaries.get(instanceId);
+      if (want === undefined || (boundary !== undefined && boundary.tag !== want.widgetID.tag)) {
         this.#removeItem(instanceId);
       }
     }
@@ -357,7 +435,7 @@ export class PageCanvas extends HTMLElementBase {
     itemEl.setAttribute('aria-roledescription', 'widget');
     const host = (itemEl.querySelector('.grid-stack-item-content') as HTMLElement | null) ?? itemEl;
     this.#items.set(item.i, itemEl);
-    this.#mounts.mount(host, this.#mountInput(item));
+    this.#boundaries.mount(host, this.#mountInput(item));
   }
 
   /** Update a surviving item's geometry (gridstack) and ABI state (in place, no re-mount). */
@@ -373,14 +451,14 @@ export class PageCanvas extends HTMLElementBase {
       noMove: isLocked,
       noResize: isLocked,
     });
-    this.#mounts.updateAbiState(item.i, this.#abiState(item));
+    this.#boundaries.updateAbiState(item.i, this.#abiState(item));
   }
 
   /** Unmount a widget (fires `disconnectedCallback`) then remove its now-empty grid item. */
   #removeItem(instanceId: string): void {
     // Unmount first so the widget's disconnectedCallback fires deterministically,
     // before gridstack tears the item element out of the DOM.
-    this.#mounts.unmount(instanceId);
+    this.#boundaries.unmount(instanceId);
     const itemEl = this.#items.get(instanceId);
     if (itemEl !== undefined) {
       this.#grid!.removeWidget(itemEl, true, false);
@@ -391,7 +469,7 @@ export class PageCanvas extends HTMLElementBase {
   /** Re-apply the mutable ABI (context / settings / edit-mode) to every mounted widget. */
   #refreshAbiState(): void {
     for (const item of this.#activeItems()) {
-      this.#mounts.updateAbiState(item.i, this.#abiState(item));
+      this.#boundaries.updateAbiState(item.i, this.#abiState(item));
     }
   }
 
@@ -401,9 +479,10 @@ export class PageCanvas extends HTMLElementBase {
   }
 
   /** The full mount input for one layout item (identity + SDK handle + ABI state). */
-  #mountInput(item: LayoutWidget): WidgetMountInput {
+  #mountInput(item: LayoutWidget): BoundaryMountInput {
     return {
       tag: item.widgetID.tag,
+      widgetID: item.widgetID,
       instanceId: item.i,
       sdk: this.#sdk,
       ...this.#abiState(item),

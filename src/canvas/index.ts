@@ -6,10 +6,12 @@
  *
  * The engine (`@gridmason/core/engine`) resolves a layout DOM-free; this layer
  * renders the resulting {@link EffectiveLayout} to a real grid, mounting one
- * widget custom element per placed item with the widget ABI. Edit mode
- * (drag/resize/add/remove/tabs, #18) builds on the mounting + lifecycle
- * foundation; the keyboard alternative (#19), the per-widget error boundary
- * (#20), and virtualization (#21) are the remaining sibling C-E3 issues.
+ * widget custom element per placed item with the widget ABI. The per-widget
+ * error boundary + skeletons + telemetry attribution (`./boundary`) wrap every
+ * mount, and edit mode (drag/resize/add/remove/tabs, `./edit-mode`, #18) builds
+ * on the mounting + lifecycle foundation. The keyboard alternative (#19) and
+ * virtualization (#21) are the remaining sibling C-E3 issues.
  */
 export * from './PageCanvas/index.js';
+export * from './boundary/index.js';
 export * from './edit-mode/index.js';
