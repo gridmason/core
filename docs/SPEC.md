@@ -69,7 +69,7 @@ widget:
 **Widget ABI (custom element):**
 - Attrs in: `context` (serialized typed page context), `settings` (saved per-instance props), `instance-id`, `edit-mode`.
 - Events out: DOM `CustomEvent`s (e.g. `gm:action`); cross-widget comms via the host SDK's typed event bus.
-- Host SDK handle supplied by the shell at mount; **core passes it through opaquely** (interface in `@gridmason/sdk`).
+- Host SDK handle supplied by the shell on the element's **`.sdk` property**, assigned **before `connectedCallback`** so a widget can read `this.sdk` at connect; re-assigning it overwrites the handle on live widgets in place (no re-mount). **Core passes it through opaquely** and never inspects it (interface in `@gridmason/sdk`). Full delivery contract — property name, timing, re-assignment, opacity — pinned in `docs/canvas-abi.md`.
 - Lifecycle: the engine guarantees `disconnectedCallback` runs before an instance is removed or re-mounted (layout change, tab switch, gate flip); widgets MUST release resources there (timers, observers, listeners). Event-bus subscriptions made through the SDK handle are auto-released on unmount (sdk §3 rule 6), so a well-behaved widget's only cleanup burden is what it allocated outside the SDK.
 - Settings UX: widget may register a settings element; fallback = JSON-schema-driven form (adapter renders it in the host's design system). POC pattern kept.
 

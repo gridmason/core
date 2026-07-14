@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test } from 'vitest';
 
 import { ABI_ATTR } from './abi.js';
 import type { WidgetMountInput } from './abi.js';
@@ -19,6 +19,19 @@ class LifecycleWidget extends HTMLElement {
   }
 }
 customElements.define('mm-widget', LifecycleWidget);
+
+// A widget that records only its instance id and never touches `.sdk` — used to
+// prove core drives the whole mount→unmount lifecycle without inspecting the
+// handle (the opaque-handle lock below mounts a handle that throws on access).
+class OpaqueProbeWidget extends HTMLElement {
+  connectedCallback(): void {
+    log.push(`opaque-connected:${this.getAttribute(ABI_ATTR.instanceId)}`);
+  }
+  disconnectedCallback(): void {
+    log.push(`opaque-disconnected:${this.getAttribute(ABI_ATTR.instanceId)}`);
+  }
+}
+customElements.define('mm-opaque-widget', OpaqueProbeWidget);
 
 let host: HTMLElement;
 let manager: WidgetMountManager;
@@ -130,4 +143,35 @@ test('honors an injected ownerDocument for element creation', () => {
   const scoped = new WidgetMountManager({ ownerDocument: document });
   const mounted = scoped.mount(host, input('w1'));
   expect(mounted.element.ownerDocument).toBe(document);
+});
+
+// Locks the SDK handle-delivery contract at the mount seam (docs/canvas-abi.md,
+// issue #52). If a later change moves when/whether `.sdk` is assigned relative to
+// connect, or makes core read the handle, one of these must fail.
+describe('SDK handle delivery contract (#52)', () => {
+  test('the handle is readable synchronously in connectedCallback (assigned before connect)', () => {
+    // mm-widget reads this.sdk during connectedCallback and logs it; the logged
+    // handle proves `.sdk` was assigned before the element was inserted, not after.
+    manager.mount(host, input('w1', { sdk: 'HANDLE' }));
+    expect(log).toEqual(['connected:w1:HANDLE']);
+  });
+
+  test('a mount with no handle leaves `.sdk` as an own property set to undefined', () => {
+    const el = manager.mount(host, input('w1')).element;
+    expect(Object.hasOwn(el, 'sdk')).toBe(true);
+    expect((el as unknown as { sdk?: unknown }).sdk).toBeUndefined();
+  });
+
+  test('core never inspects the handle across the full mount/update/unmount lifecycle', () => {
+    // A handle that throws on any access; only mm-opaque-widget (which never reads
+    // `.sdk`) is mounted, so any throw here means core touched the handle.
+    const throwOnInspect = (): never => {
+      throw new Error('the SDK handle must not be inspected by core');
+    };
+    const handle = new Proxy({}, { get: throwOnInspect, has: throwOnInspect });
+    manager.mount(host, input('w1', { tag: 'mm-opaque-widget', sdk: handle }));
+    expect(manager.updateAbiState('w1', { context: { a: 1 }, settings: undefined, editMode: true })).toBe(true);
+    expect(manager.unmount('w1')).toBe(true);
+    expect(log).toEqual(['opaque-connected:w1', 'opaque-disconnected:w1']);
+  });
 });

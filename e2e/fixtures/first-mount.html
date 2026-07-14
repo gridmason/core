@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>PageCanvas first-mount sizing e2e fixture</title>
+    <link rel="stylesheet" href="/node_modules/gridstack/dist/gridstack.css" />
+    <!--
+      Same boot as e2e/fixtures/page-canvas.html: resolve the bare specifiers the
+      built canvas ESM imports without a bundler (gridstack → the UMD global set
+      by gridstack-all.js, @gridmason/protocol → its ESM dist). See that fixture
+      for the rationale; this one exercises the imperative first-mount path (#63)
+      an SPA host hits, so it defers *all* mounting to its control surface.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "gridstack": "data:text/javascript,export const GridStack=window.GridStack;export default window.GridStack;",
+          "@gridmason/protocol": "/node_modules/@gridmason/protocol/dist/index.js"
+        }
+      }
+    </script>
+    <script src="/node_modules/gridstack/dist/gridstack-all.js"></script>
+    <style>
+      /* A full-width block host, exactly like an SPA route slot: the canvas is
+         display:block;width:100% and its containing block spans the viewport. */
+      #app { width: 100%; }
+    </style>
+  </head>
+  <body>
+    <main id="app"></main>
+    <script type="module">
+      import { PageCanvas } from '/dist/canvas/index.js';
+      import { DEMO_CONTEXT, single } from './support.js';
+
+      class E2EWidget extends HTMLElement {}
+      customElements.define('gm-e2e-widget', E2EWidget);
+      PageCanvas.define();
+
+      const id = (tag) => ({ source: 'local', tag });
+      const item = (i, over = {}) => ({ widgetID: id('gm-e2e-widget'), i, x: 0, y: 0, w: 4, h: 3, ...over });
+
+      const nextFrame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+      /**
+       * Reproduce the SPA first-mount path: create a fresh full-width container,
+       * append a brand-new canvas, then drive it imperatively the way a React 19
+       * host does (`el.context = …; el.layout = …`). Measure the placed item's
+       * real box on the next frame — no resize event, no timeout — and report it
+       * against the grid box it should fill. A collapsed first mount shows an item
+       * far narrower than its grid (percentage width resolved stale, #63).
+       */
+      async function mountAndMeasure(w) {
+        const container = document.createElement('div');
+        container.style.width = '100%';
+        document.getElementById('app').appendChild(container);
+
+        const canvas = document.createElement(PageCanvas.tagName);
+        canvas.context = DEMO_CONTEXT;
+        container.appendChild(canvas); // connectedCallback → gridstack init
+        // Drive the layout in the same task, before the browser has laid the
+        // fresh container out — the transient state the bug lives in.
+        canvas.layout = single([item('only', { x: 0, y: 0, w, h: 8 })]);
+
+        await nextFrame();
+
+        const gridEl = canvas.querySelector('.grid-stack');
+        const itemEl = canvas.itemElement('only');
+        return {
+          w,
+          gridWidth: Math.round(gridEl.getBoundingClientRect().width),
+          itemWidth: Math.round(itemEl.getBoundingClientRect().width),
+          colWidthVar: getComputedStyle(gridEl).getPropertyValue('--gs-column-width').trim(),
+        };
+      }
+
+      window.__gm = { mountAndMeasure };
+      window.__gm_ready = true;
+    </script>
+  </body>
+</html>

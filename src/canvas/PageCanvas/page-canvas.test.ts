@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test } from 'vitest';
 
 import type { EffectiveLayout } from '../../engine/layout/index.js';
 import type { LayoutPage, LayoutWidget } from '@gridmason/protocol';
@@ -208,13 +208,47 @@ test('changing context updates every mounted widget in place', () => {
   expect(log).toEqual([]);
 });
 
-test('setting sdk re-assigns the opaque handle on already-mounted widgets', () => {
-  canvas.layout = singleGrid([widget('w1')]);
-  connect();
-  const el = canvas.widgetElement('w1')!;
-  const handle = { late: true };
-  canvas.sdk = handle;
-  expect((el as unknown as { sdk?: unknown }).sdk).toBe(handle);
+// Locks the host→widget SDK handle-delivery contract at the canvas seam
+// (docs/canvas-abi.md, issue #52) — the `.sdk` property, before-connect timing,
+// in-place re-assignment, and the single shared handle of 0.3.x.
+describe('SDK handle delivery contract (#52)', () => {
+  test('setting sdk re-assigns the opaque handle on already-mounted widgets in place', () => {
+    canvas.sdk = { first: true };
+    canvas.layout = singleGrid([widget('w1')]);
+    connect();
+    const el = canvas.widgetElement('w1')!;
+    log.length = 0;
+
+    const handle = { second: true };
+    canvas.sdk = handle;
+
+    expect((el as unknown as { sdk?: unknown }).sdk).toBe(handle);
+    // In place: no re-mount (no disconnect/reconnect) and the widget is not
+    // signalled — the same element carries the new handle.
+    expect(log).toEqual([]);
+    expect(canvas.widgetElement('w1')).toBe(el);
+  });
+
+  test('one shared handle reaches every mounted widget by the same reference (0.3.x)', () => {
+    const handle = { shared: true };
+    canvas.sdk = handle;
+    canvas.layout = singleGrid([widget('w1'), widget('w2', { x: 4 })]);
+    connect();
+
+    const a = canvas.widgetElement('w1') as unknown as { sdk?: unknown };
+    const b = canvas.widgetElement('w2') as unknown as { sdk?: unknown };
+    expect(a.sdk).toBe(handle);
+    expect(b.sdk).toBe(handle);
+    expect(a.sdk).toBe(b.sdk);
+  });
+
+  test('an unset canvas sdk still delivers `.sdk` to a widget as undefined', () => {
+    canvas.layout = singleGrid([widget('w1')]);
+    connect();
+    const el = canvas.widgetElement('w1')!;
+    expect(Object.hasOwn(el, 'sdk')).toBe(true);
+    expect((el as unknown as { sdk?: unknown }).sdk).toBeUndefined();
+  });
 });
 
 test('a locked slot renders its item locked and non-movable', () => {
