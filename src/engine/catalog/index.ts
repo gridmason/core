@@ -4,10 +4,15 @@
  * and telemetry. See {@link WidgetCatalog}.
  */
 export type {
+  CatalogChangeEvent,
+  CatalogClearedEvent,
+  CatalogEventMap,
   CatalogRefusalEvent,
   CatalogRefusalReason,
+  CatalogRegisteredEvent,
   CatalogRegistration,
   CatalogTelemetry,
+  CatalogUnregisteredEvent,
   WidgetCatalogEntry,
   WidgetCatalogOptions,
 } from './catalog.js';

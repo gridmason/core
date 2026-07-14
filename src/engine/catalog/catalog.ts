@@ -16,6 +16,8 @@
 import type { Manifest, TagViolation, WidgetID } from '@gridmason/protocol';
 import { compareWidgetIds, lintTag, sourcesEqual, widgetIdKey } from '@gridmason/protocol';
 
+import { Emitter } from '../events/emitter.js';
+
 /** A registered widget type: its source-qualified identity plus its manifest. */
 export interface WidgetCatalogEntry {
   /** Source-qualified identity `(source, tag)` this entry is keyed by. */
@@ -87,6 +89,48 @@ export type CatalogRegistration =
   | { readonly ok: false; readonly event: CatalogRefusalEvent };
 
 /**
+ * A widget type was registered: emitted after {@link WidgetCatalog.register}
+ * succeeds and the entry is queryable. Refusals do **not** emit a change event —
+ * they are a separate, non-mutating concern surfaced through {@link CatalogTelemetry}.
+ */
+export interface CatalogRegisteredEvent {
+  readonly type: 'catalog:registered';
+  /** The entry that was added. */
+  readonly entry: WidgetCatalogEntry;
+}
+
+/** A widget type was removed by {@link WidgetCatalog.unregister} (which returned `true`). */
+export interface CatalogUnregisteredEvent {
+  readonly type: 'catalog:unregistered';
+  /** The identity that was removed, freeing its tag. */
+  readonly id: WidgetID;
+  /** The entry that was removed. */
+  readonly entry: WidgetCatalogEntry;
+}
+
+/** Every registration was dropped by {@link WidgetCatalog.clear}, emptying the tag namespace. */
+export interface CatalogClearedEvent {
+  readonly type: 'catalog:cleared';
+}
+
+/**
+ * A change to the catalog's contents. The canvas (or any host) subscribes via
+ * {@link WidgetCatalog.events} to keep a picker or palette in sync with the set
+ * of registered widget types.
+ */
+export type CatalogChangeEvent =
+  | CatalogRegisteredEvent
+  | CatalogUnregisteredEvent
+  | CatalogClearedEvent;
+
+/** The typed event map of {@link WidgetCatalog.events}, keyed by {@link CatalogChangeEvent} `type`. */
+export interface CatalogEventMap {
+  'catalog:registered': CatalogRegisteredEvent;
+  'catalog:unregistered': CatalogUnregisteredEvent;
+  'catalog:cleared': CatalogClearedEvent;
+}
+
+/**
  * A source-qualified widget type registry. One instance models one document's
  * tag namespace: each `tag` is bound to at most one `source`, and identities are
  * compared on `(source, tag)` together via `@gridmason/protocol` helpers.
@@ -97,6 +141,14 @@ export class WidgetCatalog {
   /** The single owning identity of each bound bare `tag`. */
   readonly #tagOwners = new Map<string, WidgetID>();
   readonly #telemetry: CatalogTelemetry | undefined;
+
+  /**
+   * Change events for the catalog's contents (SPEC §2: the engine emits change
+   * events; the canvas is the only DOM consumer). Emits {@link CatalogRegisteredEvent}
+   * on a successful {@link register}, {@link CatalogUnregisteredEvent} on an
+   * {@link unregister} that removed an entry, and {@link CatalogClearedEvent} on {@link clear}.
+   */
+  readonly events: Emitter<CatalogEventMap> = new Emitter<CatalogEventMap>();
 
   constructor(options: WidgetCatalogOptions = {}) {
     this.#telemetry = options.telemetry;
@@ -130,6 +182,7 @@ export class WidgetCatalog {
     const entry: WidgetCatalogEntry = { id, manifest };
     this.#entries.set(widgetIdKey(id), entry);
     this.#tagOwners.set(manifest.tag, id);
+    this.events.emit('catalog:registered', { type: 'catalog:registered', entry });
     return { ok: true, entry };
   }
 
@@ -163,6 +216,7 @@ export class WidgetCatalog {
     if (!entry) return false;
     this.#entries.delete(widgetIdKey(id));
     this.#tagOwners.delete(entry.manifest.tag);
+    this.events.emit('catalog:unregistered', { type: 'catalog:unregistered', id, entry });
     return true;
   }
 
@@ -180,6 +234,7 @@ export class WidgetCatalog {
   clear(): void {
     this.#entries.clear();
     this.#tagOwners.clear();
+    this.events.emit('catalog:cleared', { type: 'catalog:cleared' });
   }
 
   /** Build a refusal event, emit it to telemetry, and return the failed result. */
