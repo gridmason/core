@@ -99,6 +99,21 @@
           item('locked', { slot: 'header', w: 12, h: 2 }),
           item('free', { y: 2 }),
         ], ['header'])),
+        // Virtualization on: w1 near the top (on-screen), and w2 + w3 stacked far
+        // down the page (adjacent, so they co-mount when scrolled to) — both stay
+        // unmounted until scrolled into view.
+        loadVirtualized: () => {
+          canvas.virtualize = true;
+          build(single([item('w1'), item('w2', { y: 100 }), item('w3', { y: 102 })]));
+        },
+        // Centre the target so an adjacent widget (w2 just above w3) stays in view
+        // too — focusing it for the Tab-reachability check then won't re-scroll.
+        scrollToItem: (i) => { canvas.itemElement(i)?.scrollIntoView({ block: 'center' }); },
+        landmark: (i) => {
+          const el = canvas.itemElement(i);
+          return el ? { instance: el.getAttribute('data-gm-instance'), tabindex: el.getAttribute('tabindex') } : null;
+        },
+
         loadTabbed: () => build({
           layout: {
             schemaVersion: 1, page: 'demo', name: 'Demo', default: true,

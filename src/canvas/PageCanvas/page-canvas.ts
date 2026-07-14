@@ -98,10 +98,49 @@ export interface CanvasGeometryChangeDetail {
  */
 export const CANVAS_RENDERED_EVENT = 'gm:rendered';
 
-/** The `detail` of a {@link CANVAS_RENDERED_EVENT} — the instance ids on the active grid, in mount order. */
+/**
+ * The `detail` of a {@link CANVAS_RENDERED_EVENT} — every instance **placed** on
+ * the active grid, in placement order. Note "placed", not "mounted": under
+ * {@link PageCanvas.virtualize} a placed item may be offscreen with its widget
+ * unmounted, yet it is still in this list (its grid item exists so geometry and
+ * page height stay correct). For the subset whose widget content is actually
+ * mounted, read {@link PageCanvas.mountedInstanceIds}.
+ */
 export interface CanvasRenderedDetail {
-  /** Every instance id currently placed on the active grid. */
+  /** Every instance id currently placed on the active grid, whether or not its widget is mounted. */
   readonly instanceIds: readonly string[];
+}
+
+/**
+ * The event a {@link PageCanvas} dispatches when **virtualization** lazily mounts
+ * a single widget — its grid item has scrolled into the near-viewport band and
+ * its widget content is now in the DOM (SPEC §7, FR-15). It is the per-widget,
+ * scroll-driven complement to {@link CANVAS_RENDERED_EVENT}: a full render
+ * reconciles the whole grid, whereas this fires for one widget's mount that
+ * happens *between* renders. The a11y layer (#19) listens for it to make the
+ * newly-mounted item a keyboard landmark straight away — without it, a widget the
+ * virtualizer mounts lazily would never become focusable/tab-reachable until an
+ * unrelated full render. Fires only under {@link PageCanvas.virtualize}; an eager
+ * mount is already covered by the render that places it.
+ */
+export const CANVAS_WIDGET_MOUNTED_EVENT = 'gm:widget-mounted';
+
+/**
+ * The event a {@link PageCanvas} dispatches when **virtualization** lazily unmounts
+ * a single widget — its grid item has left the near-viewport band and its widget
+ * content has been torn down (its `disconnectedCallback` fired), while the grid
+ * item itself stays placed (SPEC §7, FR-15). The a11y layer (#19) listens for it
+ * to rescue keyboard focus if the just-unmounted widget was the focused one (so
+ * focus is never stranded on an emptied cell) and then drop the now-defunct
+ * landmark, since a torn-down widget is not a keyboard target. The complement to
+ * {@link CANVAS_WIDGET_MOUNTED_EVENT}; fires only under {@link PageCanvas.virtualize}.
+ */
+export const CANVAS_WIDGET_UNMOUNTED_EVENT = 'gm:widget-unmounted';
+
+/** The `detail` of a {@link CANVAS_WIDGET_MOUNTED_EVENT} / {@link CANVAS_WIDGET_UNMOUNTED_EVENT} — the single instance whose mount state changed. */
+export interface CanvasWidgetLifecycleDetail {
+  /** The instance id whose widget was just (un)mounted by virtualization. */
+  readonly instanceId: string;
 }
 
 /** Default gridstack column count when a layout does not pin one (SPEC §3 `maxColumns`). */
@@ -628,6 +667,25 @@ export class PageCanvas extends HTMLElementBase {
     this.#boundaries.unmount(instanceId);
   }
 
+  /**
+   * Announce that virtualization has (un)mounted a single widget *between* renders,
+   * so the a11y layer (#19) can landmark a lazily-mounted item or rescue focus off
+   * a lazily-unmounted one. The full-reconcile signal is {@link CANVAS_RENDERED_EVENT};
+   * this is its per-widget, scroll-driven complement.
+   */
+  #dispatchWidgetLifecycle(
+    type: typeof CANVAS_WIDGET_MOUNTED_EVENT | typeof CANVAS_WIDGET_UNMOUNTED_EVENT,
+    instanceId: string,
+  ): void {
+    this.dispatchEvent(
+      new CustomEvent<CanvasWidgetLifecycleDetail>(type, {
+        detail: { instanceId },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
   /** Render, then close the perf window if one is open (only settles a data-triggered render). */
   #renderAndSettle(): void {
     this.#render();
@@ -650,8 +708,14 @@ export class PageCanvas extends HTMLElementBase {
     if (this.#virtualizer === undefined) {
       this.#virtualizer = new CanvasVirtualizer(
         {
-          mount: (instanceId) => this.#mountBoundary(instanceId),
-          unmount: (instanceId) => this.#unmountBoundary(instanceId),
+          mount: (instanceId) => {
+            this.#mountBoundary(instanceId);
+            this.#dispatchWidgetLifecycle(CANVAS_WIDGET_MOUNTED_EVENT, instanceId);
+          },
+          unmount: (instanceId) => {
+            this.#unmountBoundary(instanceId);
+            this.#dispatchWidgetLifecycle(CANVAS_WIDGET_UNMOUNTED_EVENT, instanceId);
+          },
         },
         {
           rootMargin: this.#virtualizeRootMargin,

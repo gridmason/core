@@ -48,6 +48,33 @@ edits fire it — the canvas's own programmatic re-render (a `layout` assignment
 does not — so a consumer can round-trip the edit back into `layout` without a
 feedback loop. This is the hook the edit-mode controller listens on.
 
+### Canvas lifecycle events
+
+Three additive, bubbling/composed `CustomEvent`s report what the grid is doing,
+so the a11y layer (#19) can keep keyboard landmarks and focus in sync as widgets
+mount and unmount. Distinct from `gm:geometry-change`, which fires only for a
+**user** pointer edit:
+
+| Event | Constant | `detail` | When |
+|---|---|---|---|
+| `gm:rendered` | `CANVAS_RENDERED_EVENT` | `{ instanceIds }` | After **every** programmatic render reconciles the grid (a `layout`/`activeTab` change, a resolution-gate flip). |
+| `gm:widget-mounted` | `CANVAS_WIDGET_MOUNTED_EVENT` | `{ instanceId }` | Under **virtualization** only, when one widget mounts because its cell scrolled into the near-viewport band. |
+| `gm:widget-unmounted` | `CANVAS_WIDGET_UNMOUNTED_EVENT` | `{ instanceId }` | Under **virtualization** only, when one widget unmounts because its cell scrolled out of the band. |
+
+`gm:rendered`'s `detail.instanceIds` lists every instance **placed** on the active
+grid, in placement order — *not* the mounted subset. Under `virtualize` a placed
+item can be offscreen with its widget unmounted yet still appear here (its grid
+item exists, so geometry and page height stay correct); read `mountedInstanceIds`
+for the actually-mounted subset. `gm:widget-mounted` / `gm:widget-unmounted` are
+its per-widget, scroll-driven complement: virtualization changes what is mounted
+*between* renders, so these fire once per widget as it enters or leaves the band.
+The a11y layer landmarks a lazily-mounted widget on `gm:widget-mounted` (so a
+scrolled-in widget is keyboard-reachable at once, not only after some later full
+render) and, on `gm:widget-unmounted`, rescues focus if the scrolled-out widget
+held it and then drops its landmark. A keyboard **landmark tracks mount state**:
+an offscreen, torn-down widget is not a Tab stop, and regains its landmark when it
+scrolls back into view.
+
 ## Edit mode (`edit-mode`, #18)
 
 `EditController` (`@gridmason/core/canvas`) drives an authoring session over a
