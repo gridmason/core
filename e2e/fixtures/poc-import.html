@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>POC importer e2e fixture</title>
+    <link rel="stylesheet" href="/node_modules/gridstack/dist/gridstack.css" />
+    <!--
+      Resolve `gridstack` to the UMD global (see page-canvas.html) and
+      `@gridmason/protocol` to its ESM dist — the engine io + catalog modules
+      import protocol at runtime.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "gridstack": "data:text/javascript,export const GridStack=window.GridStack;export default window.GridStack;",
+          "@gridmason/protocol": "/node_modules/@gridmason/protocol/dist/index.js"
+        }
+      }
+    </script>
+    <script src="/node_modules/gridstack/dist/gridstack-all.js"></script>
+  </head>
+  <body>
+    <main id="app"></main>
+    <script type="module">
+      import { PageCanvas, BOUNDARY_CLASS } from '/dist/canvas/index.js';
+      import {
+        WidgetCatalog,
+        PageTypeRegistry,
+        importPocLayouts,
+        toRenderablePocLayout,
+        catalogAvailability,
+        POC_DEMO_PAGE_TYPE,
+      } from '/dist/engine/index.js';
+
+      // A widget that renders `<prefix>:<instance-id>` synchronously on mount.
+      const defineWidget = (tag, prefix) => {
+        customElements.define(
+          tag,
+          class extends HTMLElement {
+            connectedCallback() {
+              this.textContent = prefix + ':' + this.getAttribute('instance-id');
+            }
+          },
+        );
+      };
+      // The two widgets this host actually has. 'acme-market-ticker' is deliberately
+      // absent (never registered, never defined) — the POC widget with no catalog
+      // match, which must degrade to the anonymous card, not crash.
+      defineWidget('acme-clock', 'clock');
+      defineWidget('acme-notes', 'notes');
+      PageCanvas.define();
+
+      const manifest = (tag) => ({
+        formatVersion: '1.0',
+        tag,
+        kind: 'widget',
+        name: tag,
+        publisher: 'acme',
+        version: '1.0.0',
+        entry: './widget.js',
+      });
+
+      const catalog = new WidgetCatalog();
+      catalog.register('local', manifest('acme-clock'));
+      catalog.register('local', manifest('acme-notes'));
+
+      // The demo page type the imported POC layout renders on (FR-14).
+      const pageTypes = new PageTypeRegistry();
+      pageTypes.register(POC_DEMO_PAGE_TYPE);
+
+      // Read the checked-in `s7k-widgets-core` localStorage dump exactly as a host
+      // would read localStorage, then import it (parse + protocol convert +
+      // migrate-on-read). No engine network call — the host fetched the string.
+      const dump = await fetch('/fixtures/s7k-widgets-core/dashboard-export.json').then((r) => r.text());
+      const imported = importPocLayouts(dump);
+      const indexPage = imported.ok ? imported.pages.find((p) => p.page === 'index').doc : null;
+
+      window.__telemetry = [];
+
+      const canvas = document.createElement(PageCanvas.tagName);
+      canvas.telemetry = (event) => window.__telemetry.push(event);
+      // Would name a capability if ever asked — proving no missing-widget tag reaches
+      // it, because degradation anonymized the identity before the canvas saw it.
+      const NAMES = { 'acme-clock': 'Clock', 'acme-notes': 'Notes', 'acme-market-ticker': 'Market Ticker' };
+      canvas.widgetDescriptor = ({ widgetID }) => NAMES[widgetID.tag];
+      canvas.latencyBudgetMs = 5000;
+
+      // Resolve the imported page onto the demo page type and degrade the widget the
+      // host lacks, then hand the render-ready layout to the canvas.
+      const rendered = toRenderablePocLayout(indexPage, catalogAvailability(catalog));
+      canvas.layout = rendered.effective;
+      document.getElementById('app').appendChild(canvas);
+
+      const root = (i) => canvas.boundaryOf(i)?.root ?? null;
+
+      window.__poc = {
+        importOk: () => imported.ok,
+        pageIds: () => (imported.ok ? imported.pages.map((p) => p.page) : []),
+        degradedCount: () => rendered.degradedCount,
+        instanceIds: () => rendered.effective.layout.grid.items.map((it) => it.i),
+        state: (i) => canvas.boundaryOf(i)?.state ?? null,
+        cardTitle: (i) => root(i)?.querySelector('.' + BOUNDARY_CLASS.fallbackTitle)?.textContent ?? null,
+        widgetText: (i) => canvas.widgetElement(i)?.textContent ?? null,
+        // The full rendered DOM + serialized telemetry — the two surfaces the
+        // missing widget's tag/name/props must never appear in.
+        dom: () => canvas.innerHTML,
+        telemetryJson: () => JSON.stringify(window.__telemetry),
+      };
+
+      window.__poc_ready = true;
+    </script>
+  </body>
+</html>
