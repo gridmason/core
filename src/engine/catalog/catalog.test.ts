@@ -199,3 +199,75 @@ describe('WidgetCatalog listing', () => {
     ]);
   });
 });
+
+describe('WidgetCatalog change events', () => {
+  test('emits catalog:registered with the stored entry on a successful register', () => {
+    const catalog = new WidgetCatalog();
+    const listener = vi.fn();
+    catalog.events.on('catalog:registered', listener);
+
+    const result = catalog.register(LOCAL, widget());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledWith({ type: 'catalog:registered', entry: result.entry });
+  });
+
+  test('a refused registration emits no change event (only telemetry)', () => {
+    const registered = vi.fn();
+    const telemetry = vi.fn();
+    const catalog = new WidgetCatalog({ telemetry });
+    catalog.events.on('catalog:registered', registered);
+    catalog.register(LOCAL, widget());
+    registered.mockClear();
+
+    // Duplicate identity → refusal: telemetry fires, but no change event.
+    const result = catalog.register(LOCAL, widget());
+
+    expect(result.ok).toBe(false);
+    expect(registered).not.toHaveBeenCalled();
+    expect(telemetry).toHaveBeenCalledOnce();
+  });
+
+  test('emits catalog:unregistered with the removed identity and entry', () => {
+    const catalog = new WidgetCatalog();
+    const result = catalog.register(LOCAL, widget());
+    if (!result.ok) throw new Error('unreachable');
+    const listener = vi.fn();
+    catalog.events.on('catalog:unregistered', listener);
+
+    const removed = catalog.unregister({ source: LOCAL, tag: 'acme-sales-chart' });
+
+    expect(removed).toBe(true);
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledWith({
+      type: 'catalog:unregistered',
+      id: { source: LOCAL, tag: 'acme-sales-chart' },
+      entry: result.entry,
+    });
+  });
+
+  test('an unregister that removes nothing emits no event', () => {
+    const catalog = new WidgetCatalog();
+    const listener = vi.fn();
+    catalog.events.on('catalog:unregistered', listener);
+
+    const removed = catalog.unregister({ source: LOCAL, tag: 'acme-missing' });
+
+    expect(removed).toBe(false);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  test('emits catalog:cleared on clear', () => {
+    const catalog = new WidgetCatalog();
+    catalog.register(LOCAL, widget());
+    const listener = vi.fn();
+    catalog.events.on('catalog:cleared', listener);
+
+    catalog.clear();
+
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledWith({ type: 'catalog:cleared' });
+  });
+});

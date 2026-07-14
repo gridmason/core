@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import type { PageTypeInput } from './index.js';
 import { PageTypeRegistry, PageTypeRegistrationError } from './index.js';
@@ -205,5 +205,27 @@ describe('PageTypeRegistry — lookup', () => {
     const a = registry.register({ id: 'a', context: {} });
     const b = registry.register({ id: 'b', context: {} });
     expect(registry.list()).toEqual([a, b]);
+  });
+});
+
+describe('PageTypeRegistry — change events', () => {
+  test('emits pageType:registered with the normalized page type on register', () => {
+    const registry = new PageTypeRegistry();
+    const listener = vi.fn();
+    registry.events.on('pageType:registered', listener);
+
+    const registered = registry.register(customerDetail);
+
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledWith({ type: 'pageType:registered', pageType: registered });
+  });
+
+  test('a rejected descriptor throws and emits nothing', () => {
+    const registry = new PageTypeRegistry();
+    const listener = vi.fn();
+    registry.events.on('pageType:registered', listener);
+
+    expect(() => registry.register({ id: '', context: {} })).toThrow(PageTypeRegistrationError);
+    expect(listener).not.toHaveBeenCalled();
   });
 });

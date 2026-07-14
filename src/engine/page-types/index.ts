@@ -23,6 +23,8 @@
  */
 import type { ContextMap } from '@gridmason/protocol';
 
+import { Emitter } from '../events/emitter.js';
+
 /**
  * A page-type descriptor as supplied to {@link PageTypeRegistry.register}. This
  * is the engine's registration input; the registry validates and normalizes it
@@ -194,6 +196,30 @@ function normalize(input: PageTypeInput): RegisteredPageType {
 }
 
 /**
+ * A page type was registered: emitted after {@link PageTypeRegistry.register}
+ * validates and stores a descriptor. A rejected descriptor throws
+ * {@link PageTypeRegistrationError} and emits nothing.
+ */
+export interface PageTypeRegisteredEvent {
+  readonly type: 'pageType:registered';
+  /** The normalized page type that was added. */
+  readonly pageType: RegisteredPageType;
+}
+
+/**
+ * A change to the page-type registry's contents. Subscribe via
+ * {@link PageTypeRegistry.events}. Registration is the only mutation, so this is
+ * currently a single-member union — it stays a union so future mutations extend
+ * it without a breaking rename.
+ */
+export type PageTypeChangeEvent = PageTypeRegisteredEvent;
+
+/** The typed event map of {@link PageTypeRegistry.events}, keyed by {@link PageTypeChangeEvent} `type`. */
+export interface PageTypeEventMap {
+  'pageType:registered': PageTypeRegisteredEvent;
+}
+
+/**
  * An in-memory registry of page types (SPEC §3). Hosts (and plugins) register
  * their page-type descriptors; the registry validates each one — including its
  * typed context — at registration time, so a malformed descriptor is rejected
@@ -201,6 +227,13 @@ function normalize(input: PageTypeInput): RegisteredPageType {
  */
 export class PageTypeRegistry {
   readonly #pageTypes = new Map<string, RegisteredPageType>();
+
+  /**
+   * Change events for the registry's contents (SPEC §2: the engine emits change
+   * events; the canvas is the only DOM consumer). Emits {@link PageTypeRegisteredEvent}
+   * after a successful {@link register}.
+   */
+  readonly events: Emitter<PageTypeEventMap> = new Emitter<PageTypeEventMap>();
 
   /**
    * Validate and register a page-type descriptor. Returns the normalized,
@@ -218,6 +251,7 @@ export class PageTypeRegistry {
     validateContextMap(input.context, '');
     const registered = normalize(input);
     this.#pageTypes.set(registered.id, registered);
+    this.events.emit('pageType:registered', { type: 'pageType:registered', pageType: registered });
     return registered;
   }
 

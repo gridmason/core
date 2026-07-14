@@ -19,6 +19,16 @@ export type {
   ReadOnlyLayout,
 } from './load.js';
 
+// The observable current-layout holder (LayoutManager, SPEC §2): holds the
+// page's LayoutDoc and emits change events on load/replace for the canvas.
+export { LayoutStore } from './store.js';
+export type {
+  LayoutChangedEvent,
+  LayoutChangeEvent,
+  LayoutLoadedEvent,
+  LayoutStoreEventMap,
+} from './store.js';
+
 // Migrate-on-read framework, owned by @gridmason/protocol, re-surfaced for
 // engine consumers that build a registry or read the current version.
 export { CURRENT_LAYOUT_SCHEMA_VERSION, MigratorRegistry, layoutMigrators } from '@gridmason/protocol';
