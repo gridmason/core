@@ -187,6 +187,16 @@ export class PageCanvas extends HTMLElementBase {
 
   #grid: GridStack | undefined;
   #gridHost: HTMLElement | undefined;
+  /**
+   * One-shot observer that re-resolves the item widths the first time the grid
+   * host actually has a layout box (#63). On a client-side first mount the host is
+   * inserted and its items placed before the browser has laid the containing block
+   * out, so each item's percentage width (`calc(w * var(--gs-column-width))`)
+   * resolves stale — collapsed to content width — until some later reflow; the
+   * grid self-corrects only on a visible late jump. This forces the re-resolution
+   * as soon as the box is real, then disconnects. See {@link #observeFirstLayout}.
+   */
+  #firstLayoutObserver: ResizeObserver | undefined;
 
   /** Offscreen-widget virtualization (#21, FR-15). Off by default — every widget mounts eagerly. */
   #virtualize = false;
@@ -510,6 +520,53 @@ export class PageCanvas extends HTMLElementBase {
     // so re-applying the persisted layout never re-triggers this.
     this.#grid.on('dragstop', this.#onUserEdit);
     this.#grid.on('resizestop', this.#onUserEdit);
+    this.#observeFirstLayout();
+  }
+
+  /**
+   * Re-resolve the grid items' percentage widths once the grid host first has a
+   * real layout box, so a first-mount item never stays at a stale (collapsed)
+   * width (#63). Items placed before the browser has laid the containing block
+   * out get their `calc(w * var(--gs-column-width))` width resolved as `auto`
+   * (content width) and Chromium does not invalidate that cached resolution when
+   * the box later settles — the grid self-corrects only on a much later reflow.
+   * The grid host's first `ResizeObserver` report is delivered *after* the browser
+   * has laid the element out; on it we force the re-resolution, then disconnect
+   * (one-shot — ongoing resizes are gridstack's own size observer to handle). A
+   * no-op where `ResizeObserver` is unavailable (the headless unit env) or the box
+   * has no width yet, so the working SSR/static path is untouched.
+   */
+  #observeFirstLayout(): void {
+    if (typeof ResizeObserver === 'undefined' || this.#gridHost === undefined) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      if (width <= 0) return; // not laid out yet — wait for a real box
+      this.#firstLayoutObserver?.disconnect();
+      this.#firstLayoutObserver = undefined;
+      this.#invalidateColumnWidth();
+    });
+    observer.observe(this.#gridHost);
+    this.#firstLayoutObserver = observer;
+  }
+
+  /**
+   * Force the browser to re-resolve every grid item's percentage width by cycling
+   * gridstack's `--gs-column-width` custom property on the grid host: remove it,
+   * force a synchronous reflow with it absent, then restore the exact value
+   * gridstack set. Setting the property to the same value does **not** invalidate
+   * the items' stale `calc()` widths (Chromium keeps the cached `auto`); only a
+   * genuine remove→reflow→re-add cycle does. Reads the value back from the host's
+   * inline style (where gridstack writes it) rather than hardcoding it. A no-op if
+   * gridstack has not set the property (e.g. a non-numeric column count).
+   */
+  #invalidateColumnWidth(): void {
+    const host = this.#gridHost;
+    if (host === undefined) return;
+    const value = host.style.getPropertyValue('--gs-column-width');
+    if (value === '') return;
+    host.style.removeProperty('--gs-column-width');
+    void host.offsetWidth; // force a reflow with the property absent
+    host.style.setProperty('--gs-column-width', value);
   }
 
   /** Handle a settled user drag/resize: emit the current geometry for persistence (#18). */
@@ -536,6 +593,8 @@ export class PageCanvas extends HTMLElementBase {
 
   /** Destroy the grid and unmount all widgets; safe to call more than once. */
   #teardown(): void {
+    this.#firstLayoutObserver?.disconnect();
+    this.#firstLayoutObserver = undefined;
     this.#virtualizer?.disconnect();
     this.#virtualizer = undefined;
     this.#boundaries.unmountAll();
