@@ -8,5 +8,6 @@
  */
 export * from './catalog/index.js';
 export * from './layout/index.js';
+export * from './page-types/index.js';
 export * from './placement/index.js';
 export * from './picker/index.js';
