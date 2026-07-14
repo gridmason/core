@@ -27,6 +27,11 @@ interface GmA11y {
   loadLocked(): void;
   loadTabbed(): void;
   loadVirtualized(): void;
+  loadBoundary(): void;
+  boundaryState(i: string): string | null;
+  resolveSlow(): void;
+  setFlakyOk(): void;
+  retryBoundary(i: string): void;
   scrollToItem(i: string): void;
   landmark(i: string): { instance: string | null; tabindex: string | null } | null;
   add(): string;
@@ -187,6 +192,47 @@ test('virtualize + a11y: a widget mounted lazily on scroll gains a landmark and 
     );
   }
   expect(reachedW3).toBe(true);
+});
+
+test('boundary announcements: an error card and a post-retry recovery speak through the live region; a plain skeleton→ready does not (issue #55)', async ({
+  page,
+}) => {
+  await page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.loadBoundary());
+
+  // The crashing widget fell back to its card; the slow widget shows a skeleton.
+  // (These initial transitions are silent — the sink is wired after the first mount.)
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.boundaryState('crash1')))
+    .toBe('error');
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.boundaryState('slow1')))
+    .toBe('loading');
+
+  // Chatter check: a slow widget that never failed becoming ready announces
+  // NOTHING — the live region stays empty (no skeleton→ready narration).
+  await page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.resolveSlow());
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.boundaryState('slow1')))
+    .toBe('ready');
+  expect(await page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.live())).toBe('');
+
+  // Error announcement: retrying the always-crashing widget re-enters the error
+  // state and announces it, by its resolved name, through the shared live region.
+  await page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.retryBoundary('crash1'));
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.live()))
+    .toBe('Revenue Chart is unavailable.');
+
+  // Recovery announcement: fix the flaky widget, retry → it becomes interactive
+  // and the recovery (error → ready) is announced.
+  await page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.setFlakyOk());
+  await page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.retryBoundary('flaky1'));
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.boundaryState('flaky1')))
+    .toBe('ready');
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as GmWindow).__gm_a11y.live()))
+    .toBe('Sales Chart loaded.');
 });
 
 test('focus is preserved across a tab switch that unmounts the focused widget', async ({ page }) => {

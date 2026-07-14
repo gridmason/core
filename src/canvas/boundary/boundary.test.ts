@@ -63,6 +63,7 @@ customElements.define('bt-window-error', WindowErrorWidget);
 customElements.define('bt-flaky', FlakyWidget);
 
 const events: WidgetBoundaryEvent[] = [];
+const announced: string[] = [];
 let clock = 0;
 
 function makeManager(config: WidgetBoundaryConfig = {}): WidgetBoundaryManager {
@@ -94,9 +95,15 @@ function input(tag: string, i: string, over: Partial<BoundaryMountInput> = {}): 
 beforeEach(() => {
   document.body.innerHTML = '';
   events.length = 0;
+  announced.length = 0;
   clock = 0;
   flakyShouldThrow = true;
 });
+
+/** A manager with an announce sink wired to {@link announced} (plus the default telemetry). */
+function makeAnnouncingManager(config: WidgetBoundaryConfig = {}): WidgetBoundaryManager {
+  return makeManager({ announce: (m) => announced.push(m), ...config });
+}
 
 afterEach(() => {
   vi.useRealTimers();
@@ -351,4 +358,85 @@ test('configure changes behaviour for subsequent mounts', () => {
   mgr.configure({ describe: () => 'Configured Name' });
   const b = mgr.mount(makeHost(), input('bt-throw-connect', 'w1'));
   expect(b.root.querySelector(`.${BOUNDARY_CLASS.fallbackTitle}`)?.textContent).toBe('Configured Name');
+});
+
+// A11y announcements (issue #55, SPEC §7, FR-9/FR-10): the boundary speaks the
+// state changes a screen-reader user needs to hear — a widget becoming
+// unavailable, an auto-degrade, a post-retry recovery — through an opt-in sink,
+// while staying silent on the transitions that would only be chatter.
+
+test('a failed widget announces that it is unavailable, by its resolved name', () => {
+  const mgr = makeAnnouncingManager({ describe: () => 'Sales Chart' });
+  mgr.mount(makeHost(), input('bt-throw-connect', 'w1'));
+  expect(announced).toEqual(['Sales Chart is unavailable.']);
+});
+
+test('an unattributable failure announces generically — no tag echoed (SPEC §6/§8)', () => {
+  const mgr = makeAnnouncingManager();
+  mgr.mount(makeHost(), input('bt-not-defined', 'w1'));
+  expect(announced).toEqual(['A widget is unavailable.']);
+  expect(announced.join(' ')).not.toContain('bt-not-defined');
+});
+
+test('an auto-degrade on latency announces a distinct "took too long" message', () => {
+  vi.useFakeTimers();
+  const mgr = makeAnnouncingManager({
+    latencyBudgetMs: 100,
+    autoDegradeOnLatency: true,
+    describe: () => 'Live Feed',
+  });
+  mgr.mount(makeHost(), input('bt-loading-event', 'w1'));
+  vi.advanceTimersByTime(100);
+  expect(announced).toEqual(['Live Feed took too long to load and is unavailable.']);
+});
+
+test('a budget breach without auto-degrade is silent (the widget still shows its skeleton)', () => {
+  vi.useFakeTimers();
+  const mgr = makeAnnouncingManager({ latencyBudgetMs: 100 });
+  const b = mgr.mount(makeHost(), input('bt-loading-event', 'w1'));
+  vi.advanceTimersByTime(100);
+  expect(b.state).toBe('loading');
+  expect(announced).toEqual([]);
+});
+
+test('a first, never-failed load is silent — no skeleton→ready chatter', () => {
+  const mgr = makeAnnouncingManager();
+  // Synchronous ready.
+  mgr.mount(makeHost(), input('bt-ok', 'w1'));
+  // Pending → ready.
+  const slow = mgr.mount(makeHost(), input('bt-loading-event', 'w2'));
+  slow.element!.dispatchEvent(new CustomEvent('gm:ready', { bubbles: true }));
+  expect(announced).toEqual([]);
+});
+
+test('a retry that recovers a failed widget announces the recovery', () => {
+  const mgr = makeAnnouncingManager({ describe: () => 'Sales Chart' });
+  const b = mgr.mount(makeHost(), input('bt-flaky', 'w1'));
+  expect(announced).toEqual(['Sales Chart is unavailable.']);
+
+  flakyShouldThrow = false;
+  b.root.querySelector<HTMLButtonElement>(`.${BOUNDARY_CLASS.retry}`)!.click();
+
+  expect(b.state).toBe('ready');
+  expect(announced).toEqual(['Sales Chart is unavailable.', 'Sales Chart loaded.']);
+});
+
+test('when an announce sink is wired, the card drops its inline role="alert" (no double announcement)', () => {
+  const mgr = makeAnnouncingManager({ describe: () => 'Chart' });
+  const b = mgr.mount(makeHost(), input('bt-throw-connect', 'w1'));
+  const card = b.root.querySelector(`.${BOUNDARY_CLASS.fallback}`)!;
+  // The card is still a labelled group with its message and retry — just not a
+  // second live region, since the wired announcer speaks the failure.
+  expect(card.getAttribute('role')).toBe('group');
+  expect(card.querySelector('[role="alert"]')).toBeNull();
+  expect(card.querySelector(`.${BOUNDARY_CLASS.fallbackMessage}`)?.textContent).toBe(
+    'Chart ran into a problem.',
+  );
+});
+
+test('with no announce sink the boundary is silent but keeps its inline alert baseline', () => {
+  const mgr = makeManager({ describe: () => 'Chart' });
+  const b = mgr.mount(makeHost(), input('bt-throw-connect', 'w1'));
+  // No throw from the absent sink, and the role="alert" baseline is preserved.
+  expect(b.root.querySelector('[role="alert"]')).not.toBeNull();
 });

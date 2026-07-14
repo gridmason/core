@@ -54,7 +54,7 @@ export type CatalogRefusalReason =
  */
 export interface CatalogRefusalEvent {
   /** Stable discriminator for telemetry pipelines. */
-  readonly type: 'catalog.register.refused';
+  readonly type: 'catalog:register:refused';
   /** Why the registration was refused. */
   readonly reason: CatalogRefusalReason;
   /** The `(source, tag)` identity whose registration was refused. */
@@ -245,7 +245,7 @@ export class WidgetCatalog {
     tagViolations?: readonly TagViolation[];
   }): CatalogRegistration {
     const event: CatalogRefusalEvent = {
-      type: 'catalog.register.refused',
+      type: 'catalog:register:refused',
       reason: fields.reason,
       attempted: fields.attempted,
       ...(fields.incumbent ? { incumbent: fields.incumbent } : {}),

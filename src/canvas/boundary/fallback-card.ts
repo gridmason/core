@@ -20,6 +20,11 @@
  * `<button>` retry. The card root is `tabindex="-1"` so the boundary can move
  * focus to it programmatically after a user-initiated retry fails, keeping the
  * keyboard user oriented (the boundary owns *when* to focus; this builds the DOM).
+ *
+ * The inline `role="alert"` is the baseline announcement. When the boundary is
+ * wired to a persistent live-region announcer ({@link CreateFallbackCardOptions.announced}),
+ * it is dropped: the region speaks the failure reliably, and keeping both would
+ * announce it twice on screen readers that voice inserted alerts.
  */
 import { BOUNDARY_CLASS } from './styles.js';
 import type { WidgetFailureReason } from './telemetry.js';
@@ -33,6 +38,16 @@ export interface FallbackCard {
   readonly root: HTMLElement;
   /** The retry button, so the boundary can wire its click and manage focus. */
   readonly retry: HTMLButtonElement;
+}
+
+/** Options for {@link createFallbackCard}. */
+export interface CreateFallbackCardOptions {
+  /**
+   * Whether a persistent live-region announcer will speak this failure. When
+   * `true`, the card's inline `role="alert"` is omitted so the failure is not
+   * announced twice (the region is the single, reliable channel). Default `false`.
+   */
+  readonly announced?: boolean;
 }
 
 /** The user-facing message for a failure, given the (optional) resolved name. */
@@ -59,6 +74,7 @@ export function createFallbackCard(
   doc: Document,
   reason: WidgetFailureReason,
   name: string | undefined,
+  options: CreateFallbackCardOptions = {},
 ): FallbackCard {
   const title = name ?? ANONYMOUS_LABEL;
 
@@ -75,7 +91,8 @@ export function createFallbackCard(
 
   const message = doc.createElement('p');
   message.className = BOUNDARY_CLASS.fallbackMessage;
-  message.setAttribute('role', 'alert');
+  // Kept as the baseline announcement, unless a live-region announcer covers it.
+  if (options.announced !== true) message.setAttribute('role', 'alert');
   message.textContent = messageFor(reason, name);
   root.appendChild(message);
 

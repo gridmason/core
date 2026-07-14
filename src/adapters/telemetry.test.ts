@@ -4,7 +4,7 @@ import type { CatalogRefusalEvent, TelemetryAdapter, TelemetryEvent } from './te
 import { catalogTelemetryFor } from './telemetry.js';
 
 const refusal: CatalogRefusalEvent = {
-  type: 'catalog.register.refused',
+  type: 'catalog:register:refused',
   reason: 'duplicate-identity',
   attempted: { source: 'local', tag: 'acme-chart' },
 };
@@ -48,7 +48,7 @@ describe('TelemetryAdapter', () => {
     expect(seen.map((e) => e.type)).toEqual([
       'widget.error',
       'widget.latency',
-      'catalog.register.refused',
+      'catalog:register:refused',
     ]);
   });
 });
