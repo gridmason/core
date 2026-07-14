@@ -215,6 +215,15 @@ A widget whose tag was **never registered** is an entitled *load failure* and
 gets the fallback card; a *gated-off* instance is omitted by the engine and never
 reaches a boundary (SPEC §6 — no card, no capability leakage).
 
+**Layout-before-define is supported.** A layout may render before a widget's
+`customElements.define` runs (a slow or code-split widget bundle). Such a widget
+falls back with `unresolved`, but the boundary waits on
+`customElements.whenDefined(tag)` and **auto-re-mounts** it once the tag is defined
+— upgrading the unavailable card to the live widget with no user action, and
+emitting a `widget.recovery` telemetry event so a host can observe the race. This
+applies only to the unresolved-tag failure: a widget that threw, reported, or timed
+out is not re-mounted on a define — only its manual **retry** re-runs it.
+
 ### Fallback card
 
 The card shows the widget's **name** (from `widgetDescriptor`) and a **retry**

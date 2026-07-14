@@ -1,0 +1,5 @@
+---
+"@gridmason/core": patch
+---
+
+Auto-recover a widget whose custom-element tag is undefined at mount once the tag is defined later (#79). A layout can legitimately render before a widget's `customElements.define` runs (a slow or code-split widget bundle), which fell the widget back to a permanent `unresolved` "unavailable" card that never re-upgraded even after the tag was registered. The boundary now waits on `customElements.whenDefined(tag)` and, once the tag is defined, re-mounts the widget on the same path as a manual retry — upgrading the card to the live widget with no user action — and emits a `widget.recovery` telemetry event so a host can observe the layout-before-define race healing. Recovery is scoped to this failure: a widget that threw, reported an error, or timed out is not re-mounted on a define (only its manual retry re-runs it), the subscription is made once per boundary (no stacking across failed retries), and a boundary unmounted before the define resolves is left torn down.
