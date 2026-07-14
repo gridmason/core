@@ -6,83 +6,17 @@
  * remove, and (on the tabbed story) add/rename/switch tab — each persisting
  * through an in-memory persistence double whose latest doc is shown beneath the
  * canvas. Drag and resize are pointer gestures the reader performs directly on
- * the grid (the canvas is in edit mode). Framework-agnostic CSF, like the
- * PageCanvas story; the stubbed Storybook harness renders it unchanged when the
- * real config lands (C-E4).
+ * the grid. Shares the demo widget + layout builders with the other canvas
+ * stories (`./support.ts`).
  */
 import type { LayoutPage } from '@gridmason/protocol';
 
 import type { EffectiveLayout, ScopeKey } from '../src/engine/layout/index.js';
 import { EditController } from '../src/canvas/edit-mode/index.js';
 import { PageCanvas } from '../src/canvas/PageCanvas/index.js';
+import { DEMO_TAG, ensureWidgetsDefined, singleLayout, tabbedLayout, widget } from './support.js';
 
-const DEMO_TAG = 'gm-demo-widget';
 const SCOPE: ScopeKey = { owner: 'user', pageType: 'demo.page' };
-
-/** A tiny self-describing demo widget (mirrors the PageCanvas story's widget). */
-class DemoWidget extends HTMLElement {
-  static get observedAttributes(): string[] {
-    return ['settings', 'edit-mode'];
-  }
-  connectedCallback(): void {
-    this.#render();
-  }
-  attributeChangedCallback(): void {
-    this.#render();
-  }
-  #render(): void {
-    const editing = this.hasAttribute('edit-mode');
-    this.style.cssText =
-      'display:block;height:100%;box-sizing:border-box;padding:12px;border-radius:8px;font-family:system-ui,sans-serif;' +
-      `background:${editing ? '#fef3c7' : '#eef2ff'};border:1px solid ${editing ? '#f59e0b' : '#c7d2fe'};`;
-    this.innerHTML = `<strong>${this.getAttribute('instance-id') ?? '?'}</strong>`;
-  }
-}
-
-function ensureDefined(): void {
-  if (customElements.get(DEMO_TAG) === undefined) customElements.define(DEMO_TAG, DemoWidget);
-  PageCanvas.define();
-}
-
-function effective(items: { i: string; x: number; y: number; w: number; h: number; slot?: string }[]): EffectiveLayout {
-  return {
-    layout: {
-      schemaVersion: 1,
-      page: 'demo.page',
-      name: 'Demo',
-      default: true,
-      grid: {
-        items: items.map((it) => ({
-          widgetID: { source: 'local', tag: DEMO_TAG },
-          i: it.i,
-          x: it.x,
-          y: it.y,
-          w: it.w,
-          h: it.h,
-          ...(it.slot !== undefined ? { slot: it.slot } : {}),
-        })),
-      },
-      hasTabs: false,
-      tabs: [],
-    },
-    lockedSlots: items.some((it) => it.slot === 'header') ? ['header'] : [],
-  };
-}
-
-function tabbedEffective(): EffectiveLayout {
-  return {
-    layout: {
-      schemaVersion: 1,
-      page: 'demo.page',
-      name: 'Demo',
-      default: true,
-      grid: { items: [] },
-      hasTabs: true,
-      tabs: [{ name: 'Overview', grid: { items: [] } }],
-    },
-    lockedSlots: [],
-  };
-}
 
 /** A labelled toolbar button. */
 function button(label: string, onClick: () => void): HTMLButtonElement {
@@ -99,7 +33,7 @@ function buildEditDemo(
   options: { allowTabs?: boolean } = {},
   toolbar?: (controller: EditController, refresh: () => void) => HTMLElement[],
 ): HTMLElement {
-  ensureDefined();
+  ensureWidgetsDefined();
   const root = document.createElement('div');
   const stored: { doc: LayoutPage | undefined } = { doc: undefined };
 
@@ -140,7 +74,7 @@ function buildEditDemo(
 
 const meta = {
   title: 'Canvas/EditMode',
-  render: () => buildEditDemo(effective([{ i: 'summary', x: 0, y: 0, w: 6, h: 3 }])),
+  render: () => buildEditDemo(singleLayout([widget('summary', undefined, { x: 0, y: 0, w: 6, h: 3 })])),
 };
 export default meta;
 
@@ -151,10 +85,13 @@ export const Default = {};
 export const LockedSlot = {
   render: () =>
     buildEditDemo(
-      effective([
-        { i: 'header', x: 0, y: 0, w: 12, h: 2, slot: 'header' },
-        { i: 'body', x: 0, y: 2, w: 6, h: 3 },
-      ]),
+      singleLayout(
+        [
+          widget('header', undefined, { x: 0, y: 0, w: 12, h: 2, slot: 'header' }),
+          widget('body', undefined, { x: 0, y: 2, w: 6, h: 3 }),
+        ],
+        ['header'],
+      ),
       {},
       (controller) => [
         button('Remove body', () => controller.removeWidget('body')),
@@ -166,7 +103,7 @@ export const LockedSlot = {
 /** Tab authoring: add a tab, rename it, and switch between tabs. */
 export const Tabs = {
   render: () =>
-    buildEditDemo(tabbedEffective(), { allowTabs: true }, (controller) => [
+    buildEditDemo(tabbedLayout([{ name: 'Overview', items: [] }]), { allowTabs: true }, (controller) => [
       button('Add tab', () => controller.addTab(`Tab ${Date.now() % 100}`)),
       button('Rename first tab', () => controller.renameTab(0, 'Renamed')),
       button('Switch to tab 2', () => controller.switchTab(1)),

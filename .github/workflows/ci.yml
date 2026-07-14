@@ -30,13 +30,17 @@ jobs:
       # src/engine in a DOM-free node env, and the job fails if src/engine drops
       # below 100% line/branch/function/statement (see vitest.config.ts).
       - run: npm run coverage
-      # Storybook is an advisory pre-1.0 harness (stub for now); this keeps the
-      # build step green so the C-E2 canvas epic swaps in real stories without
-      # re-plumbing CI.
+      # Storybook is an advisory pre-1.0 harness (GW-D20). The real toolchain is
+      # not installed yet; this step is the story-coverage gate — it fails if a
+      # visual canvas component has no story (stories themselves type-check via
+      # `npm run typecheck`, since stories/ is in tsconfig). See docs/testing.md.
       - run: npm run build-storybook
-      # Playwright canvas e2e. The C-E3 mounting foundation (issue #17) adds the
-      # first real-browser specs (e2e/page-canvas.spec.ts), so Chromium must be
-      # installed before the run. The webServer (playwright.config.ts) rebuilds
-      # dist and serves the fixture.
+      # Playwright canvas e2e (docs/testing.md): the consolidated suite drives the
+      # built canvas + real gridstack in Chromium, so Chromium must be installed
+      # before the run. The webServer (playwright.config.ts) rebuilds dist and
+      # serves the fixtures.
       - run: npx playwright install --with-deps chromium
       - run: npm run e2e
+      # Canvas-interactive perf smoke (FR-15) — a separate config/entrypoint by
+      # design (perf/README.md); reuses the Chromium installed above.
+      - run: npm run perf

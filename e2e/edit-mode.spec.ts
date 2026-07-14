@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+import { gotoFixture } from './support/harness.js';
+
 // End-to-end proof of edit mode (issue #18, FR-9) in a *real* browser: the
 // fixture builds the built `@gridmason/core` canvas + an EditController with an
 // in-memory persistence double, and exposes a control surface (`window.__gm_edit`)
@@ -37,13 +39,10 @@ interface GmEdit {
   lifecycle(): string[];
   resetLog(): void;
 }
-type GmWindow = Window & { __gm_edit: GmEdit; __gm_ready?: boolean };
-
-const FIXTURE = '/e2e/fixtures/edit-mode.html';
+type GmWindow = Window & { __gm_edit: GmEdit };
 
 test.beforeEach(async ({ page }) => {
-  await page.goto(FIXTURE);
-  await page.waitForFunction(() => (window as unknown as GmWindow).__gm_ready === true);
+  await gotoFixture(page, '/e2e/fixtures/edit-mode.html', '__gm_ready');
 });
 
 test('add: the picker lists only gated-in widgets, and adding places + persists', async ({ page }) => {

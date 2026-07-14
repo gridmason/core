@@ -23,6 +23,7 @@
     <main id="app"></main>
     <script type="module">
       import { PageCanvas, BOUNDARY_CLASS } from '/dist/canvas/index.js';
+      import { DEMO_CONTEXT, single } from './support.js';
 
       // A healthy widget: interactive as soon as it mounts (synchronous).
       class OkWidget extends HTMLElement {
@@ -63,15 +64,11 @@
 
       const id = (tag) => ({ source: 'local', tag });
       const item = (i, tag, over = {}) => ({ widgetID: id(tag), i, x: 0, y: 0, w: 3, h: 3, ...over });
-      const single = (items) => ({
-        layout: { schemaVersion: 1, page: 'demo', name: 'Demo', default: true, grid: { items }, hasTabs: false, tabs: [] },
-        lockedSlots: [],
-      });
 
       window.__telemetry = [];
 
       const canvas = document.createElement(PageCanvas.tagName);
-      canvas.context = { record: { recordType: 'customer', id: '42' } };
+      canvas.context = DEMO_CONTEXT;
       canvas.telemetry = (event) => window.__telemetry.push(event);
       canvas.widgetDescriptor = ({ widgetID }) => NAMES[widgetID.tag];
       canvas.latencyBudgetMs = 5000;

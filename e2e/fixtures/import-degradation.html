@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Import degradation e2e fixture</title>
+    <link rel="stylesheet" href="/node_modules/gridstack/dist/gridstack.css" />
+    <!--
+      Resolve `gridstack` to the UMD global (see page-canvas.html) and
+      `@gridmason/protocol` to its ESM dist — the engine io + catalog modules
+      import protocol at runtime.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "gridstack": "data:text/javascript,export const GridStack=window.GridStack;export default window.GridStack;",
+          "@gridmason/protocol": "/node_modules/@gridmason/protocol/dist/index.js"
+        }
+      }
+    </script>
+    <script src="/node_modules/gridstack/dist/gridstack-all.js"></script>
+  </head>
+  <body>
+    <main id="app"></main>
+    <script type="module">
+      import { PageCanvas, BOUNDARY_CLASS } from '/dist/canvas/index.js';
+      import {
+        WidgetCatalog,
+        importLayout,
+        degradeUnavailableWidgets,
+        catalogAvailability,
+      } from '/dist/engine/index.js';
+
+      // A widget that renders `<prefix>:<instance-id>` synchronously on mount.
+      const defineWidget = (tag, prefix) => {
+        customElements.define(
+          tag,
+          class extends HTMLElement {
+            connectedCallback() {
+              this.textContent = prefix + ':' + this.getAttribute('instance-id');
+            }
+          },
+        );
+      };
+      // The one widget this instance actually has. 'e2e-secret' is deliberately
+      // absent (never registered, never defined) — the untrusted/unavailable tag.
+      defineWidget('e2e-known', 'known');
+      PageCanvas.define();
+
+      const manifest = (tag) => ({
+        formatVersion: '1.0',
+        tag,
+        kind: 'widget',
+        name: tag,
+        publisher: 'e2e',
+        version: '1.0.0',
+        entry: './widget.js',
+      });
+
+      const catalog = new WidgetCatalog();
+      catalog.register('local', manifest('e2e-known'));
+
+      // A descriptor that WOULD name the secret capability if it were ever asked —
+      // proving the secret tag never reaches it, because degradation anonymized the
+      // identity before the canvas saw it.
+      const NAMES = { 'e2e-known': 'Known Widget', 'e2e-secret': 'Secret Capability' };
+
+      // An imported layout (as JSON text, exercising the parse+validate path)
+      // referencing the known widget and an untrusted, unavailable one. The secret
+      // entry also carries identifying props + slot that must not survive.
+      const importedJson = JSON.stringify({
+        schemaVersion: 1,
+        page: 'demo',
+        name: 'Imported',
+        default: false,
+        hasTabs: false,
+        grid: {
+          items: [
+            { widgetID: { source: 'local', tag: 'e2e-known' }, i: 'w-known', x: 0, y: 0, w: 3, h: 3 },
+            {
+              widgetID: { source: 'sideload:evil.example', tag: 'e2e-secret' },
+              i: 'w-secret',
+              x: 3,
+              y: 0,
+              w: 3,
+              h: 3,
+              props: { apiKey: 'sekret-value' },
+              slot: 'admin-panel',
+            },
+          ],
+        },
+        tabs: [],
+      });
+
+      const parsed = importLayout(importedJson);
+      // The original (real-identity) doc is retained for lossless restore.
+      const originalDoc = parsed.ok ? parsed.doc : null;
+
+      window.__telemetry = [];
+
+      const canvas = document.createElement(PageCanvas.tagName);
+      canvas.telemetry = (event) => window.__telemetry.push(event);
+      canvas.widgetDescriptor = ({ widgetID }) => NAMES[widgetID.tag];
+      canvas.latencyBudgetMs = 5000;
+
+      let degradedCount = 0;
+      const renderDegraded = () => {
+        const result = degradeUnavailableWidgets(originalDoc, catalogAvailability(catalog));
+        degradedCount = result.degradedCount;
+        canvas.layout = { layout: result.doc, lockedSlots: [] };
+      };
+      renderDegraded();
+      document.getElementById('app').appendChild(canvas);
+
+      const root = (i) => canvas.boundaryOf(i)?.root ?? null;
+
+      window.__io = {
+        state: (i) => canvas.boundaryOf(i)?.state ?? null,
+        mounted: () => canvas.mountedInstanceIds,
+        cardTitle: (i) => root(i)?.querySelector('.' + BOUNDARY_CLASS.fallbackTitle)?.textContent ?? null,
+        widgetText: (i) => canvas.widgetElement(i)?.textContent ?? null,
+        degradedCount: () => degradedCount,
+        // The full rendered DOM of the canvas, and the serialized telemetry — the
+        // two surfaces the unknown tag/name/props must never appear in.
+        dom: () => canvas.innerHTML,
+        telemetryJson: () => JSON.stringify(window.__telemetry),
+        // Make the previously-unavailable widget appear, then re-derive the render
+        // doc from the untouched original: the instance restores losslessly.
+        restore: () => {
+          defineWidget('e2e-secret', 'secret');
+          catalog.register('sideload:evil.example', manifest('e2e-secret'));
+          renderDegraded();
+        },
+      };
+
+      window.__io_ready = true;
+    </script>
+  </body>
+</html>
