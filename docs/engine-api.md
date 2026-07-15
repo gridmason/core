@@ -162,8 +162,11 @@ Change events (`LayoutChangeEvent`):
 
 ## Scope
 
-This surface is the C-E1 headless model: catalog, page-type registry, layout
-operations, and the event model. `resolveLayout` + 3-level governance (C-E2), the
-gridstack-bound canvas (C-E3), and adapters/import-export (C-E4) land in later
-epics; the `placement` and `picker` engine slots are present but not yet
-populated.
+This surface is the headless engine: the catalog, page-type registry, layout
+operations, the event model, first-fit placement, and the widget picker. The
+`placement` slot supplies first-fit auto-placement (`placeFirstFit` /
+`firstFitPosition`), and the `picker` slot supplies add-widget eligibility
+(`eligibleWidgets` / `isWidgetEligible`) plus resolution-time gating
+(`gateResolvedLayout` / `resolveAndGateLayout`) and layout export/import
+(`exportLayout` / `importLayout`). The gridstack-bound canvas is documented
+separately in `docs/canvas-abi.md`.
