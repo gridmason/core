@@ -232,7 +232,18 @@ fresh mount). When no name is available (an unknown/unentitled tag), the card is
 **anonymous** ("Unavailable widget") and echoes **no tag or name** (SPEC §6/§8).
 Cards and skeletons are accessible: a skeleton exposes a `role="status"`
 announcement; a card is a labelled `role="group"` with a `role="alert"` message
-and a real focusable retry `<button>`.
+and a real focusable retry `<button>`. The card's baked-in colours are opaque and
+**WCAG AA compliant with no host CSS** — the text/background pairs are deterministic
+because the card background does not inherit the host backdrop.
+
+**Theming.** Every boundary colour is a CSS custom property with a self-contained
+AA default; a host overrides any of them on an ancestor to match its design system:
+`--gm-fallback-bg` / `--gm-fallback-border` / `--gm-fallback-title-color` /
+`--gm-fallback-message-color`, `--gm-retry-bg` / `--gm-retry-color` /
+`--gm-retry-border` / `--gm-retry-focus-outline`, and the skeleton tones
+`--gm-skeleton-bg` / `--gm-skeleton-bar-base` / `--gm-skeleton-bar-highlight`. A host
+that overrides `--gm-fallback-bg` owns the resulting contrast (the defaults are the
+only pairs core guarantees).
 
 ### Telemetry attribution
 
